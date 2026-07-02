@@ -1,0 +1,33 @@
+# =============================================================================
+# workflow.config.yaml — orchestration & enforcement (Conductor ONLY)
+# =============================================================================
+# The two-file model:
+#   • skills.config.yaml (repo root) — WHICH skill (and external skill) backs
+#     each slot. Read by BOTH slash commands and Conductor. Owns `tdd` etc.
+#   • workflow.config.yaml (this file) — HOW Conductor orchestrates and ENFORCES:
+#     fix-loop caps, gates, env/isolation. Not needed when a developer runs a
+#     skill via a slash command standalone.
+#
+# Anything that MUST hold is enforced by a script/CI step, not by a prompt.
+#
+# =============================================================================
+
+# Bounded correction loop. NOTE: Conductor has no per-edge iteration counter, so
+# this cap is enforced INSIDE the fix-loop skill (/fix) (which bounds itself to 3), not
+# by a workflow route condition. The `fix` step in each pipeline invokes that skill.
+fix_loop:
+  max_attempts: 3
+
+# Enforced by the verify script step / CI — never by a skill's prompt.
+gates:
+  coverage_threshold: 80
+  require_tests_before_done: true   # enforced by the assert_* script steps (test -s on the artifact)
+  freeze_approved_tests: true       # QA self-healing may not weaken assertions
+
+# Environment lifecycle for script steps (kv/stack wrappers).
+env:
+  isolation_key: "{run_id}"
+  teardown: always                  # stack down always runs, even on failure
+
+# QA tiering (guidance consumed by the qa-automation skill).
+e2e_tier: critical-journeys-only

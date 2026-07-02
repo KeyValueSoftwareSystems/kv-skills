@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# =============================================================================
+# install.sh — install the KeyValue AI-SDLC pack into your project
+# =============================================================================
+# Run this from the ROOT of your main repo. It:
+#   1. installs OUR skills          (npx skills add keyvalue/kv-sdlc-skills)
+#   2. installs the external skills the flow uses, one by one (npx skills add ...)
+#   3. copies the Conductor workflows + config into your repo
+#   4. installs Conductor (optional — needs `uv`; skip with --no-conductor)
+#
+# Two ways to run — no clone required either way:
+#   • Piped (no clone): fetches the workflows/config from the repo tarball itself.
+#       curl -fsSL https://raw.githubusercontent.com/keyvalue/kv-sdlc-skills/main/install.sh \
+#         | bash -s -- claude-code cursor
+#   • From a checkout: copies the workflows/config sitting next to this script.
+#       /path/to/kv-skills/install.sh claude-code
+#
+# Bare words are IDE/agent names (default: claude-code). Flags: --no-conductor.
+#
+# Env overrides:
+#   KV_SKILLS_REPO   our pack's GitHub slug   (default keyvalue/kv-sdlc-skills)
+#   KV_SKILLS_REF    git ref for the tarball  (default main)
+#   DEST             where to copy workflows  (default: current directory)
+# =============================================================================
+set -uo pipefail   # not -e: one failed skill install must not abort the rest
+
+REPO="${KV_SKILLS_REPO:-keyvalue/kv-sdlc-skills}"
+REF="${KV_SKILLS_REF:-main}"
+DEST="${DEST:-$PWD}"
+
+# Parse args: bare words are IDE/agent names; --no-conductor skips step 4.
+INSTALL_CONDUCTOR=1
+AGENTS=""
+for a in "$@"; do
+  case "$a" in
+    --no-conductor) INSTALL_CONDUCTOR=0 ;;
+    -*) echo "unknown flag: $a" >&2; exit 2 ;;
+    *)  AGENTS="$AGENTS $a" ;;
+  esac
+done
+[ -n "$AGENTS" ] || AGENTS="claude-code"          # default IDE
+AFLAGS=""; for ag in $AGENTS; do AFLAGS="$AFLAGS -a $ag"; done
+
+command -v npx >/dev/null 2>&1 || { echo "npx (Node.js) is required." >&2; exit 1; }
+
+# Locate the pack files (workflows/ + skills.config.yaml). Use the checkout we're
+# running from if there is one; otherwise download the repo tarball — no clone.
+CLEANUP=""
+SELF="${BASH_SOURCE[0]:-}"
+if [ -n "$SELF" ] && [ -f "$SELF" ] && [ -d "$(dirname "$SELF")/workflows" ]; then
+  SRC="$(cd "$(dirname "$SELF")" && pwd)"
+else
+  command -v curl >/dev/null 2>&1 || { echo "curl required for no-clone install." >&2; exit 1; }
+  command -v tar  >/dev/null 2>&1 || { echo "tar required for no-clone install." >&2; exit 1; }
+  CLEANUP="$(mktemp -d)"
+  echo "==> Downloading pack ($REPO@$REF)"
+  curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" | tar -xz -C "$CLEANUP" \
+    || { echo "could not download $REPO@$REF — set KV_SKILLS_REPO/KV_SKILLS_REF." >&2; rm -rf "$CLEANUP"; exit 1; }
+  SRC="$(cd "$CLEANUP"/*/ && pwd)"                # the single extracted top dir
+fi
+
+echo "==> Installing skills for:$AFLAGS"
+
+# 1) our skills
+echo "--> $REPO (our skills)"
+npx skills add "$REPO" --skill '*' $AFLAGS </dev/null \
+  || echo "WARN: could not install $REPO (published? set KV_SKILLS_REPO)"
+
+# 2) external skills the default flow uses (Superpowers pack, MIT — installed from source)
+EXTERNAL_SKILLS="
+brainstorming
+writing-plans
+test-driven-development
+requesting-code-review
+systematic-debugging
+using-git-worktrees
+"
+for s in $EXTERNAL_SKILLS; do
+  echo "--> obra/superpowers --skill $s"
+  npx skills add obra/superpowers --skill "$s" $AFLAGS </dev/null \
+    || echo "WARN: failed to install external skill: $s"
+done
+
+# 3) copy the Conductor workflows + config into the target repo (idempotent — no nesting)
+echo "==> Copying workflows + config into $DEST"
+mkdir -p "$DEST/workflows"
+cp -R "$SRC/workflows/."         "$DEST/workflows/"
+cp    "$SRC/skills.config.yaml"  "$DEST/skills.config.yaml"
+
+# keep regenerable run output out of git
+if [ -f "$DEST/.gitignore" ] && ! grep -q '^\.sdlc/' "$DEST/.gitignore" 2>/dev/null; then
+  printf '\n# KeyValue AI-SDLC run output (regenerable)\n.sdlc/\n.kv/\n' >> "$DEST/.gitignore"
+fi
+
+# 4) Conductor (optional)
+if [ "$INSTALL_CONDUCTOR" = 1 ]; then
+  if command -v uv >/dev/null 2>&1; then
+    echo "==> Installing Conductor (with claude-agent-sdk)"
+    uv tool install --force --with 'claude-agent-sdk>=0.1.0' \
+      git+https://github.com/microsoft/conductor.git \
+      || echo "WARN: Conductor install failed — install manually (see README)."
+  else
+    echo "==> Skipping Conductor: 'uv' not found. To run the workflows later:"
+    echo "    uv tool install --force --with 'claude-agent-sdk>=0.1.0' git+https://github.com/microsoft/conductor.git"
+  fi
+fi
+
+[ -n "$CLEANUP" ] && rm -rf "$CLEANUP"
+
+cat <<EOF
+
+Done. Next:
+  • Slash commands (any IDE):  /hld  /design  /backend-impl  /qa  ...
+  • Full pipeline (Conductor):
+      cd workflows && conductor validate main.yaml
+      conductor run main.yaml --web \\
+        --input feature="Add saved-search" --input feature_slug="saved-search"
+  • Swap any behavior by editing skills.config.yaml (one file, everywhere).
+EOF

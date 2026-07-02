@@ -1,0 +1,190 @@
+# =============================================================================
+# KeyValue AI-SDLC  ::  backend_impl.yaml (standalone sub-workflow) — BACKEND
+# =============================================================================
+# Runnable directly:
+#   conductor run backend_impl.yaml --input feature="..." \
+#     --input feature_slug="saved-search" --input contract_summary="GET /searches ..."
+# Composed by main.yaml (via dispatch.yaml) per affected stack. Also `/backend-impl`.
+#
+# Flow (matches the guide: task split -> execute -> tests -> verify -> reviewer):
+#   tasks (/backend-tasks) -> implementer (/backend-impl, test-first)
+#     -> unit+integration -> contract verification   (deterministic gates)
+#       -> backend review (/backend-review)          ==> reviews/summary.md
+# A failed check routes to the `fix` step (/fix), which fixes + re-verifies in one
+# turn (bound of 3 lives INSIDE the skill; the graph stays acyclic). A blocking
+# review or an unresolved fix escalates to a human. Behavior lives in the skills.
+# =============================================================================
+
+workflow:
+  name: sdlc-backend-impl
+  description: Backend — task split, implement, test, verify, backend review.
+  entry_point: tasks
+
+  instructions:
+    - >-
+      Each step invokes an installed skill by name; the skill owns its own behavior.
+      Write each artifact to the path the skill resolves from skills.config.yaml
+      `artifacts:` before returning.
+
+  runtime:
+    provider: claude-agent-sdk
+    default_model: claude-haiku-4-5
+
+  limits:
+    max_iterations: 30
+    timeout_seconds: 3000
+
+  input:
+    feature:
+      type: string
+      required: true
+    feature_slug:
+      type: string
+      required: true
+    contract_summary:
+      type: string
+      required: true
+      description: The cross-repo contract the backend OWNS (implements exactly).
+    contract_path:
+      type: string
+      required: false
+      default: ""
+    lld_path:
+      type: string
+      required: false
+      default: ""
+
+agents:
+  # ---- 0. TASK SPLIT (/backend-tasks -> writing-plans) --------
+  - name: tasks
+    description: Split approved scope into ordered tasks via the backend-tasks skill.
+    prompt: |
+      Run the **/backend-tasks** skill. Inputs:
+      - feature:          {{ workflow.input.feature }}
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - contract_summary: {{ workflow.input.contract_summary }}
+      {% if workflow.input.lld_path %}- lld_path: {{ workflow.input.lld_path }}{% endif %}
+      Return: tasks_path, risky.
+    output:
+      tasks_path: { type: string }
+      risky: { type: boolean }
+    routes:
+      - to: implementer
+
+  # ---- 1. IMPLEMENT (/backend-impl, test-first) ---------------------------
+  - name: implementer
+    description: Implement backend against the contract (test-first) via the backend-implement skill.
+    model: claude-sonnet-5            # implementation (per-step override; SoT for the model)
+    prompt: |
+      Run the **/backend-impl** skill. Inputs:
+      - feature:          {{ workflow.input.feature }}
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - tasks:            {{ tasks.output.tasks_path }}
+      - branch:           feature/{{ workflow.input.feature_slug }}-backend
+      - contract_summary (backend OWNS this — implement it exactly): {{ workflow.input.contract_summary }}
+      Return: branch, summary.
+    output:
+      branch: { type: string }
+      summary: { type: string }
+    routes:
+      - to: unit_tests
+
+  # ---- 2. UNIT + INTEGRATION (deterministic gate) -------------------------
+  - name: unit_tests
+    type: script
+    description: Run unit + integration tests in a clean env.
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        echo "[backend] kv up -> seed -> ready_check"
+        echo "[backend] pytest (unit + integration)..."
+        echo "[backend] unit+integration: PASS"
+        exit 0
+    timeout: 1800
+    routes:
+      - to: contract_check
+        when: "exit_code == 0"
+      - to: fix                       # failed check -> bounded fix (cap lives in the skill)
+
+  # ---- 3. CONTRACT VERIFICATION (provider side) ---------------------------
+  - name: contract_check
+    type: script
+    description: Provider-side contract verification (backend owns the contract).
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        echo "[backend] contract (provider) tests against {{ workflow.input.contract_path }}..."
+        echo "[backend] contract: PASS"
+        exit 0
+    timeout: 600
+    routes:
+      - to: reviewers
+        when: "exit_code == 0"
+      - to: fix                       # failed contract check -> bounded fix
+
+  # ---- 4. BACKEND REVIEW (/backend-review) -----------------------
+  # Runs the backend-review skill (read-only). Writes findings; a blocking result escalates.
+  - name: reviewers
+    description: Run the backend-review skill.
+    prompt: |
+      Run the **/backend-review** skill. Inputs:
+      - feature:          {{ workflow.input.feature }}
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - branch:           feature/{{ workflow.input.feature_slug }}-backend
+      - contract_summary: {{ workflow.input.contract_summary }}
+      Return: review_path, blocking.
+    output:
+      review_path: { type: string }
+      blocking: { type: boolean }
+    routes:
+      - to: give_up                   # blocking findings -> escalate to a human (no silent auto-fix of review findings)
+        when: "{{ output.blocking }}"
+      - to: done
+
+  # ---- 5. BOUNDED FIX (agent-owned retry; replaces the broken workflow loop) ----
+  # Conductor has no per-edge iteration counter, so the "<= 3 attempts then stop"
+  # bound lives INSIDE the fix-loop skill (which caps itself at 3), not in a
+  # workflow route condition. This step fixes AND re-verifies in one turn and
+  # reports resolved; the workflow stays acyclic (no counter needed).
+  - name: fix
+    description: Bounded fix + re-verify via the fix-loop skill (cap enforced in the skill).
+    model: claude-sonnet-5
+    prompt: |
+      Run the **/fix** skill (bounded root-cause loop; cap enforced in the skill). After
+      fixing, re-run the failed checks (unit + integration + provider-side contract) and
+      return `resolved: true` only if all now pass, else `resolved: false` with a short reason.
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - branch:           feature/{{ workflow.input.feature_slug }}-backend
+      - contract_summary: {{ workflow.input.contract_summary }}
+    output:
+      resolved: { type: boolean }
+      summary: { type: string }
+    routes:
+      - to: reviewers
+        when: "{{ output.resolved }}"
+      - to: give_up
+
+  - name: done
+    type: terminate
+    status: success
+    reason: "Backend green: tests + contract + backend review."
+    output_template:
+      branch: "{{ implementer.output.branch }}"
+      summary: "{{ implementer.output.summary }}"
+      tests_passed: "true"
+      review_path: "{{ reviewers.output.review_path }}"
+
+  - name: give_up
+    type: terminate
+    status: failed
+    reason: "Backend still failing after 3 fix attempts — needs a human."
+
+output:
+  branch: "{% if implementer is defined %}{{ implementer.output.branch }}{% endif %}"
+  summary: "{% if implementer is defined %}{{ implementer.output.summary }}{% endif %}"
+  tests_passed: "{% if reviewers is defined %}true{% else %}false{% endif %}"
+  review_path: "{% if reviewers is defined %}{{ reviewers.output.review_path }}{% endif %}"

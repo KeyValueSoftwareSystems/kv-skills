@@ -1,0 +1,194 @@
+# =============================================================================
+# KeyValue AI-SDLC  ::  design.yaml — HLD -> approve -> LLD + CONTRACT
+# =============================================================================
+# The whole design phase in one workflow. Runnable directly:
+#   conductor run design.yaml --web --input feature="..." --input feature_slug="saved-search"
+# Composed by main.yaml as the design step.
+#
+# Flow:
+#   author_hld (/plan)  -> assert hld.md -> HUMAN approve
+#     -> backend_design ∥ frontend_design   (parallel — author per-stack LLDs)
+#        -> contract (/api-contract: reconcile the LLDs into the cross-repo OpenAPI
+#           contract + acceptance criteria)
+#
+# NOTE: this workflow contains a human_gate (HLD approval). Run it with `--web`.
+# When composed by main.yaml it runs as a nested sub-workflow — verify your
+# Conductor surfaces the nested gate to the parent run.
+#
+# Artifacts:
+#   docs/technical/<slug>/hld.md
+#   docs/technical/<slug>/lld/backend.md
+#   docs/technical/<slug>/lld/frontend.md
+#   contracts/<slug>/openapi.yaml
+#   docs/functional/<slug>/acceptance-criteria.md
+# =============================================================================
+
+workflow:
+  name: sdlc-design
+  description: HLD -> human approval -> per-stack LLDs (parallel) -> cross-repo contract.
+  entry_point: author_hld
+
+  instructions:
+    - >-
+      Each step invokes an installed skill by name; the skill owns its own behavior.
+      Write each artifact to the path the skill resolves from skills.config.yaml
+      `artifacts:` before returning.
+
+  runtime:
+    provider: claude-agent-sdk
+    default_model: claude-haiku-4-5
+
+  limits:
+    max_iterations: 32
+    timeout_seconds: 4200
+
+  input:
+    feature:
+      type: string
+      required: true
+    feature_slug:
+      type: string
+      required: true
+    prd_path:
+      type: string
+      required: false
+      default: "./docs/business/prd.md"
+      description: Path to the PRD artifact (assumed to exist).
+
+# ----------------------------------------------------------------------------
+# Parallel LLD authoring: backend + frontend, concurrent (after HLD approval).
+# (parallel groups allow only agent steps — the design agents qualify.)
+# ----------------------------------------------------------------------------
+parallel:
+  - name: author_llds
+    description: Author the backend and frontend LLDs in parallel.
+    failure_mode: all_or_nothing
+    agents: [backend_design, frontend_design]
+    routes:
+      - to: contract
+
+agents:
+  # ---- 1. PLAN — author the HLD (/plan) -----------------------------------
+  - name: author_hld
+    description: Produce the high-level design (HLD) via the plan skill.
+    model: claude-opus-4-8            # design judgement (per-step override; SoT for the model)
+    prompt: |
+      Run the **/plan** skill. Inputs:
+      - feature:      {{ workflow.input.feature }}
+      - feature_slug: {{ workflow.input.feature_slug }}
+      - prd_path:     {{ workflow.input.prd_path }}
+      Return: hld_path, hld_summary, open_questions.
+    output:
+      hld_path: { type: string }
+      hld_summary: { type: string }
+      open_questions: { type: string }
+    routes:
+      - to: assert_hld
+
+  # ---- 1b. ASSERT the HLD artifact exists ---------------------------------
+  - name: assert_hld
+    type: script
+    description: Verify the HLD artifact was created (deterministic proof).
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        f="docs/technical/{{ workflow.input.feature_slug }}/hld.md"
+        if [ -s "$f" ]; then echo "[artifact] OK: $f ($(wc -l < "$f" | tr -d ' ') lines)"; exit 0
+        else echo "[artifact] MISSING/EMPTY: $f" >&2; exit 1; fi
+    routes:
+      - to: hld_approval
+        when: "exit_code == 0"
+      - to: abort
+
+  # ---- 2. HUMAN APPROVAL: HLD ---------------------------------------------
+  - name: hld_approval
+    type: human_gate
+    description: Review the high-level design before detailed design.
+    prompt: |
+      ## HLD Review — {{ workflow.input.feature }}
+
+      Artifact: `docs/technical/{{ workflow.input.feature_slug }}/hld.md`
+
+      **Summary:** {{ author_hld.output.hld_summary }}
+
+      **Open questions:** {{ author_hld.output.open_questions }}
+
+      Approve to proceed to detailed design (per-stack LLDs), request revisions, or reject.
+    options:
+      - label: "Approve — proceed to LLD"
+        value: approve
+        route: author_llds
+      - label: "Request HLD revisions"
+        value: revise
+        route: author_hld
+        prompt_for: feedback
+      - label: "Reject — abort"
+        value: reject
+        route: abort
+
+  # ---- 3. PER-STACK LLDs (parallel) ---------------------------------------
+  - name: backend_design
+    description: Author the backend LLD via the backend-design skill.
+    prompt: |
+      Run the **/backend-design** skill. Inputs:
+      - feature:      {{ workflow.input.feature }}
+      - feature_slug: {{ workflow.input.feature_slug }}
+      - hld_path:     {{ author_hld.output.hld_path }}
+      Return: lld_path.
+    output:
+      lld_path: { type: string }
+
+  - name: frontend_design
+    description: Author the frontend LLD via the frontend-design skill.
+    prompt: |
+      Run the **/frontend-design** skill. Inputs:
+      - feature:      {{ workflow.input.feature }}
+      - feature_slug: {{ workflow.input.feature_slug }}
+      - hld_path:     {{ author_hld.output.hld_path }}
+      Return: lld_path.
+    output:
+      lld_path: { type: string }
+
+  # ---- 4. CONTRACT (/api-contract) ----------------------------------------
+  - name: contract
+    description: Reconcile the per-stack LLDs into the cross-repo contract via the api-contract skill.
+    model: claude-opus-4-8            # contract reconciliation (per-step override; SoT for the model)
+    prompt: |
+      Run the **/api-contract** skill (the per-stack LLDs have already been written — pass them).
+      Inputs:
+      - feature:      {{ workflow.input.feature }}
+      - feature_slug: {{ workflow.input.feature_slug }}
+      - hld_path:     {{ author_hld.output.hld_path }}
+      - backend_lld:  {{ author_llds.outputs.backend_design.lld_path }}
+      - frontend_lld: {{ author_llds.outputs.frontend_design.lld_path }}
+      Return: contract_path, contract_summary, affected_repos, acceptance_criteria.
+    output:
+      contract_path: { type: string }
+      contract_summary:
+        type: string
+        description: Human-readable cross-repo contract (breaking changes flagged).
+      affected_repos:
+        type: array
+        description: 'e.g. [{"name":"backend"},{"name":"frontend"}].'
+      acceptance_criteria:
+        type: string
+    routes:
+      - to: $end
+
+  - name: abort
+    type: terminate
+    status: failed
+    reason: "Design aborted (HLD rejected or missing artifact)."
+
+output:
+  hld_path: "{{ author_hld.output.hld_path }}"
+  hld_summary: "{{ author_hld.output.hld_summary }}"
+  open_questions: "{{ author_hld.output.open_questions }}"
+  backend_lld_path:  "{{ author_llds.outputs.backend_design.lld_path }}"
+  frontend_lld_path: "{{ author_llds.outputs.frontend_design.lld_path }}"
+  contract_path: "{{ contract.output.contract_path }}"
+  contract_summary: "{{ contract.output.contract_summary }}"
+  affected_repos: "{{ contract.output.affected_repos }}"
+  acceptance_criteria: "{{ contract.output.acceptance_criteria }}"

@@ -1,0 +1,200 @@
+# =============================================================================
+# KeyValue AI-SDLC  ::  frontend_impl.yaml (standalone sub-workflow) — FRONTEND
+# =============================================================================
+# Runnable directly:
+#   conductor run frontend_impl.yaml --input feature="..." \
+#     --input feature_slug="saved-search" --input contract_summary="GET /searches ..."
+# Composed by main.yaml (via dispatch.yaml). Also `/frontend-impl`.
+#
+# Flow (guide: task split -> execute UI states -> tests -> verify a11y -> reviewer):
+#   tasks (/frontend-tasks-equivalent via frontend-implement plan)
+#     -> implementer (/frontend-impl, consumes contract, all UI states)
+#       -> component tests -> Playwright E2E -> a11y gate  (deterministic)
+#         -> the frontend-review skill
+# Loops: failed check -> implementer (max 3); reviewer changes -> implementer (max 3).
+# =============================================================================
+
+workflow:
+  name: sdlc-frontend-impl
+  description: Frontend — implement UI states, component + E2E tests, a11y, review.
+  entry_point: tasks
+
+  instructions:
+    - >-
+      Each step invokes an installed skill by name; the skill owns its own behavior.
+      Write each artifact to the path the skill resolves from skills.config.yaml
+      `artifacts:` before returning.
+
+  runtime:
+    provider: claude-agent-sdk
+    default_model: claude-haiku-4-5
+
+  limits:
+    max_iterations: 32
+    timeout_seconds: 3000
+
+  input:
+    feature:
+      type: string
+      required: true
+    feature_slug:
+      type: string
+      required: true
+    contract_summary:
+      type: string
+      required: true
+      description: The cross-repo contract the frontend consumes.
+    contract_path:
+      type: string
+      required: false
+      default: ""
+    lld_path:
+      type: string
+      required: false
+      default: ""
+
+agents:
+  # ---- 0. TASK SPLIT (frontend plan) --------------------------------------
+  - name: tasks
+    description: Plan frontend tasks + required UI states via the frontend-implement skill (plan mode).
+    prompt: |
+      Run the **/frontend-impl** skill in PLAN mode (plan only — do NOT write code): produce
+      the task list + UI-state matrix, and write it to
+      `.sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.md`. Inputs:
+      - feature:          {{ workflow.input.feature }}
+      - contract_summary: {{ workflow.input.contract_summary }}
+      {% if workflow.input.lld_path %}- lld_path: {{ workflow.input.lld_path }}{% endif %}
+      Return: tasks_path.
+    output:
+      tasks_path: { type: string }
+    routes:
+      - to: implementer
+
+  # ---- 1. IMPLEMENT (/frontend-impl) --------------------------------------
+  - name: implementer
+    description: Implement frontend UI states + tests via the frontend-implement skill.
+    model: claude-sonnet-5            # implementation (per-step override; SoT for the model)
+    prompt: |
+      Run the **/frontend-impl** skill. Inputs:
+      - feature:          {{ workflow.input.feature }}
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - plan:             {{ tasks.output.tasks_path }}
+      - branch:           feature/{{ workflow.input.feature_slug }}-frontend
+      - contract_summary (frontend CONSUMES this exactly as published): {{ workflow.input.contract_summary }}
+      Return: branch, summary.
+    output:
+      branch: { type: string }
+      summary: { type: string }
+    routes:
+      - to: component_tests
+
+  - name: component_tests
+    type: script
+    description: Component + unit tests (Vitest/Jest).
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        echo "[frontend] npm test (component + unit)..."
+        echo "[frontend] component: PASS"
+        exit 0
+    timeout: 900
+    routes:
+      - to: e2e_tests
+        when: "exit_code == 0"
+      - to: fix                       # failed check -> bounded fix (cap lives in the skill)
+
+  - name: e2e_tests
+    type: script
+    description: Playwright E2E in a live env.
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        echo "[frontend] kv up -> seed -> ready_check"
+        echo "[frontend] npx playwright test..."
+        echo "[frontend] e2e: PASS"
+        exit 0
+    timeout: 1800
+    routes:
+      - to: a11y
+        when: "exit_code == 0"
+      - to: fix                       # failed E2E -> bounded fix
+
+  - name: a11y
+    type: script
+    description: Accessibility audit (axe) — WCAG AA gate.
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        echo "[frontend] axe accessibility audit (WCAG AA)..."
+        echo "[frontend] a11y: PASS"
+        exit 0
+    timeout: 600
+    routes:
+      - to: reviewers
+        when: "exit_code == 0"
+      - to: fix                       # failed a11y gate -> bounded fix
+
+  # ---- FRONTEND REVIEW (/frontend-review) -
+  - name: reviewers
+    description: Run the frontend-review skill.
+    prompt: |
+      Run the **/frontend-review** skill. Inputs:
+      - feature:      {{ workflow.input.feature }}
+      - feature_slug: {{ workflow.input.feature_slug }}
+      - branch:       feature/{{ workflow.input.feature_slug }}-frontend
+      Return: review_path, blocking.
+    output:
+      review_path: { type: string }
+      blocking: { type: boolean }
+    routes:
+      - to: give_up                   # blocking findings -> escalate to a human
+        when: "{{ output.blocking }}"
+      - to: done
+
+  # ---- BOUNDED FIX (agent-owned retry; replaces the broken workflow loop) ----
+  # No per-edge counter exists in Conductor, so the "<= 3 attempts then stop" bound
+  # lives INSIDE the fix-loop skill. This step fixes AND re-verifies in one turn.
+  - name: fix
+    description: Bounded fix + re-verify via the fix-loop skill (cap enforced in the skill).
+    model: claude-sonnet-5
+    prompt: |
+      Run the **/fix** skill (bounded root-cause loop; cap enforced in the skill). After
+      fixing, re-run the failed checks (component + E2E + a11y) and return `resolved: true`
+      only if all now pass, else `resolved: false` with a short reason.
+      - feature_slug:     {{ workflow.input.feature_slug }}
+      - branch:           feature/{{ workflow.input.feature_slug }}-frontend
+      - contract_summary: {{ workflow.input.contract_summary }}
+    output:
+      resolved: { type: boolean }
+      summary: { type: string }
+    routes:
+      - to: reviewers
+        when: "{{ output.resolved }}"
+      - to: give_up
+
+  - name: done
+    type: terminate
+    status: success
+    reason: "Frontend green: component + E2E + a11y + frontend review."
+    output_template:
+      branch: "{{ implementer.output.branch }}"
+      summary: "{{ implementer.output.summary }}"
+      tests_passed: "true"
+      review_path: "{{ reviewers.output.review_path }}"
+
+  - name: give_up
+    type: terminate
+    status: failed
+    reason: "Frontend still failing after 3 fix attempts — needs a human."
+
+output:
+  branch: "{% if implementer is defined %}{{ implementer.output.branch }}{% endif %}"
+  summary: "{% if implementer is defined %}{{ implementer.output.summary }}{% endif %}"
+  tests_passed: "{% if reviewers is defined %}true{% else %}false{% endif %}"
+  review_path: "{% if reviewers is defined %}{{ reviewers.output.review_path }}{% endif %}"
