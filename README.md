@@ -10,9 +10,9 @@ Building a feature well means the same steps every time: design it, review the d
 implement to a contract, test it, review the code, QA it, ship it. This pack encodes those
 steps once so every developer runs them the same way.
 
-- **Run it your way.** Each step is a slash command (`/plan`, `/api-contract`, `/backend-impl`, …)
-  you can run in Claude Code, Cursor, or Copilot — or run the whole pipeline end-to-end with
-  Conductor.
+- **Run it your way.** Let Conductor orchestrate the whole pipeline end-to-end, or run each
+  step yourself as a slash command (`/plan`, `/api-contract`, `/backend-impl`, …) in Claude
+  Code, Cursor, or Copilot.
 - **One place to change behavior.** Every step's behavior lives in its skill; which skill (and
   any helper skill) backs each step is one line in [`skills.config.yaml`](skills.config.yaml).
   Change it there and it changes everywhere.
@@ -21,44 +21,36 @@ steps once so every developer runs them the same way.
 
 ## Install
 
+**Prerequisites:** [Node.js](https://nodejs.org) (for `npx`), plus `curl` + `tar` (standard on
+macOS/Linux).
+
 One command from the root of **your** repo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/keyvalue/kv-sdlc-skills/main/install.sh | bash -s -- claude-code
-# ...or for several IDEs at once:
-curl -fsSL https://raw.githubusercontent.com/keyvalue/kv-sdlc-skills/main/install.sh | bash -s -- claude-code cursor
+curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh | bash -s -- claude-code
 ```
 
-Prefer to read the script before running it? Download it first, then run it:
+Or for several IDEs at once:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/keyvalue/kv-sdlc-skills/main/install.sh
-bash install.sh claude-code
+curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh | bash -s -- claude-code cursor
 ```
 
 The installer:
 
-1. installs **our skills** (`npx skills add keyvalue/kv-sdlc-skills`);
+1. installs **our skills** (`npx skills add KeyValueSoftwareSystems/kv-skills`);
 2. installs the **external helper skills** the flow uses ([Superpowers](https://github.com/obra/superpowers) — brainstorming, planning, TDD, code review, debugging, worktrees);
 3. copies the **Conductor workflows** + `skills.config.yaml` into your repo (fetched from the repo tarball when run piped);
 4. installs **Conductor** if [`uv`](https://github.com/astral-sh/uv) is available (skip with `--no-conductor`).
 
-> Needs Node.js (`npx`) — plus `curl` + `tar` for the no-clone path (both standard on macOS/Linux).
 > Conductor runs the full pipeline; you don't need it if you only use the slash commands.
 
-## Use
+## How to run
 
-**As slash commands** (any IDE) — run them in order; you review each artifact before the next:
+### As an orchestrator (Conductor)
 
-```
-/plan feature="Add saved-search" feature_slug="saved-search"   # high-level design, then approve
-/backend-design  ∥  /frontend-design   # author the per-stack LLDs
-/api-contract          # reconcile the LLDs → the cross-repo contract
-/architecture-review → /backend-impl → /backend-review
-/frontend-impl → /frontend-review → /qa → /verify → /fix → /review-pack
-```
-
-**As the full pipeline** (Conductor) — the same skills, plus automatic approval gates:
+Conductor runs the skills for you, end to end, with automatic approval gates. Same skills,
+same artifacts — it just drives the sequence:
 
 ```bash
 cd workflows
@@ -67,31 +59,36 @@ conductor run main.yaml --web \
   --input feature="Add saved-search" --input feature_slug="saved-search"
 ```
 
-Any single phase also runs on its own, e.g. `conductor run workflows/design.yaml --web --input feature="…" --input feature_slug="saved-search"` (the design phase has a human approval gate, so use `--web`).
+Any workflow below also runs on its own — useful for re-running just one phase:
+
+| Workflow | Run it | What it does |
+|----------|--------|---------------|
+| [`main.yaml`](workflows/main.yaml) | `conductor run main.yaml --web --input feature="…" --input feature_slug="…"` | Full pipeline: design → architecture review → implement (backend ∥ frontend) → QA → review pack, with a human gate at each approval point |
+| [`design.yaml`](workflows/design.yaml) | `conductor run workflows/design.yaml --web --input feature="…" --input feature_slug="…"` | HLD (`/plan`) → human approve → per-stack LLDs (backend ∥ frontend) → `/api-contract` |
+| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `conductor run backend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Backend: task split → implement (test-first) → unit/integration → contract verification → backend review |
+| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `conductor run frontend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Frontend: task split → implement UI states → component + E2E tests → a11y gate → frontend review |
+| [`qa.yaml`](workflows/qa.yaml) | `conductor run qa.yaml --input feature="…" --input feature_slug="…"` | QA automation: author acceptance-criteria E2E tests, run in a clean env |
+| [`dispatch.yaml`](workflows/dispatch.yaml) | (internal — used by `main.yaml`'s `for_each`) | Routes a build to `backend_impl.yaml` or `frontend_impl.yaml` by stack |
+
+`design.yaml` and `main.yaml` contain a human approval gate, so run them with `--web`.
 
 > The test / merge / verify shell steps in the workflows are **POC stubs** (`echo` + exit 0).
 > Wire them to your real test runner and `kv up` / `kv down` before relying on the pipeline's
 > green/red result. Conductor also needs the `claude-agent-sdk` provider — the installer sets
 > this up when `uv` is present.
 
-## The flow
+### As skills (you orchestrate manually)
+
+Run the slash commands yourself, in order, in any IDE (Claude Code, Cursor, Copilot) — you
+review each artifact before moving to the next:
 
 ```
-feature → design phase ─ HLD → [approve]
-                         → per-stack LLDs (backend ∥ frontend) → /api-contract
-        → architecture-review → [approve]
-        → implement (backend ∥ frontend: tasks → code → tests → verify → review)
-        → integrate → QA → review pack → [approve → release]
+/plan feature="Add saved-search" feature_slug="saved-search"   # high-level design, then approve
+/backend-design  ∥  /frontend-design   # author the per-stack LLDs
+/api-contract          # reconcile the LLDs → the cross-repo contract
+/architecture-review → /backend-impl → /backend-review
+/frontend-impl → /frontend-review → /qa → /verify → /fix → /review-pack
 ```
-
-The whole design phase is one workflow ([workflows/design.yaml](workflows/design.yaml)): it
-authors the HLD, pauses for human approval, then `backend-design` and `frontend-design` each
-author one LLD for their stack (`docs/technical/<slug>/lld/`), and `/api-contract` reconciles
-them into the cross-repo contract (`contracts/<slug>/`). A human reviews the LLDs + contract
-at the next gate. Per-run proof lands under `.sdlc/`; exact paths are in `skills.config.yaml`
-under `artifacts:`.
-
-## Skills
 
 | Skill | Command | Edits code? | Purpose |
 |-------|---------|:-----------:|---------|
@@ -112,6 +109,23 @@ Each editing skill carries the **standards** a change must meet (security, backw
 compatibility, migrations, accessibility, performance, …) and a **Safety** section: it will
 not write secrets or production config, and it stops to ask a human before anything
 destructive.
+
+## The flow
+
+```
+feature → design phase ─ HLD → [approve]
+                         → per-stack LLDs (backend ∥ frontend) → /api-contract
+        → architecture-review → [approve]
+        → implement (backend ∥ frontend: tasks → code → tests → verify → review)
+        → integrate → QA → review pack → [approve → release]
+```
+
+The whole design phase is one workflow ([workflows/design.yaml](workflows/design.yaml)): it
+authors the HLD, pauses for human approval, then `backend-design` and `frontend-design` each
+author one LLD for their stack (`docs/technical/<slug>/lld/`), and `/api-contract` reconciles
+them into the cross-repo contract (`contracts/<slug>/`). A human reviews the LLDs + contract
+at the next gate. Per-run proof lands under `.sdlc/`; exact paths are in `skills.config.yaml`
+under `artifacts:`.
 
 ## Configure
 
