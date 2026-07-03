@@ -3,14 +3,14 @@
 # install.sh — install the KeyValue AI-SDLC pack into your project
 # =============================================================================
 # Run this from the ROOT of your main repo. It:
-#   1. installs OUR skills          (npx skills add keyvalue/kv-sdlc-skills)
+#   1. installs OUR skills          (npx skills add KeyValueSoftwareSystems/kv-skills)
 #   2. installs the external skills the flow uses, one by one (npx skills add ...)
 #   3. copies the Conductor workflows + config into your repo
 #   4. installs Conductor (optional — needs `uv`; skip with --no-conductor)
 #
 # Two ways to run — no clone required either way:
 #   • Piped (no clone): fetches the workflows/config from the repo tarball itself.
-#       curl -fsSL https://raw.githubusercontent.com/keyvalue/kv-sdlc-skills/main/install.sh \
+#       curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh \
 #         | bash -s -- claude-code cursor
 #   • From a checkout: copies the workflows/config sitting next to this script.
 #       /path/to/kv-skills/install.sh claude-code
@@ -18,13 +18,13 @@
 # Bare words are IDE/agent names (default: claude-code). Flags: --no-conductor.
 #
 # Env overrides:
-#   KV_SKILLS_REPO   our pack's GitHub slug   (default keyvalue/kv-sdlc-skills)
+#   KV_SKILLS_REPO   our pack's GitHub slug   (default KeyValueSoftwareSystems/kv-skills)
 #   KV_SKILLS_REF    git ref for the tarball  (default main)
 #   DEST             where to copy workflows  (default: current directory)
 # =============================================================================
 set -uo pipefail   # not -e: one failed skill install must not abort the rest
 
-REPO="${KV_SKILLS_REPO:-keyvalue/kv-sdlc-skills}"
+REPO="${KV_SKILLS_REPO:-KeyValueSoftwareSystems/kv-skills}"
 REF="${KV_SKILLS_REF:-main}"
 DEST="${DEST:-$PWD}"
 
