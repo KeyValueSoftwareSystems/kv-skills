@@ -8,7 +8,9 @@ allowed-tools: Read, Grep, Glob, Bash, Write
 
 Break the approved backend scope into the **smallest ordered set of verifiable tasks** that
 implement the contract. Small tasks keep the implement→verify→fix loop tight and every
-change reviewable. Read-only — produces a task list, not code.
+change reviewable. Read-only — produces a task list, not code. This is the **fallback** author: the design phase normally emits `tasks.json` via
+`/backend-design`. Run this only when `.sdlc/<slug>/backend/tasks.json` is absent (e.g. a
+standalone `/backend-impl` run with no design phase).
 
 ## Inputs
 `feature`, `contract_summary` (the contract the backend OWNS), optional `lld_path`.
@@ -53,10 +55,15 @@ Superpowers pack, or `none`). If set, use it to produce bite-sized, verifiable t
 carry files + test + standards + risk as above. If `none`, plan in-pack.
 
 ## Output
-Write the ordered list to `.sdlc/<slug>/backend/tasks.md`. Return `tasks_path` and `risky`
-(true if any task needs a human gate).
+Write the DAG to `.sdlc/<slug>/backend/tasks.json` conforming to `workflows/tasks.schema.json`
+(same shape `/backend-design` emits): `context_manifest` (batched-read files), `tasks[]`
+(`id`, `group_id`, `title`, `depends_on` intra-group only, `reads`, `writes`, `test`,
+`standards`, `needs_human_gate`), and `slices[]` (one per independent group — two tasks share
+a group iff one depends on the other or they write a common file). Validate with
+`python3 workflows/validate_tasks.py .sdlc/<slug>/backend/tasks.json` (must print `OK`).
+Return `tasks_path`, `slices`, and `risky` (true if any task needs a human gate).
 
 ## Definition of done
 Every task ≤ ~1 commit, has a test and standards, and is dependency-ordered; migrations are
 expand/contract with rollback; negative paths and observability are represented; risky tasks
-are flagged.
+are flagged; tasks.json validates against the schema (no cross-group edges, disjoint writes across groups).
