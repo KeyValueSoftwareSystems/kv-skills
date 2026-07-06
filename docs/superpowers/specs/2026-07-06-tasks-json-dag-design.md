@@ -31,21 +31,33 @@ in **as few tool calls as possible**, keeping each impl run under the ~50 SDK-ca
 
 ## Key constraint (shapes the whole design)
 
-**Conductor's workflow graph is static YAML.** The `parallel:` block (e.g. `author_llds`
-in `design.yaml`) is a hand-declared, fixed list of agent steps. Conductor **cannot** read
-a runtime `tasks.json` and dynamically fan out N branches from it — the number and shape of
-tasks is unknown until design time.
+**Conductor `for_each` fans out over a runtime array, but is a flat concurrent map — not a
+DAG executor.** `main.yaml`'s `implement` step already `for_each`-es over stacks in parallel
+(`max_concurrent: 2`, `failure_mode: all_or_nothing`), and its `source` can be a prior step's
+output (the repo comment reads *"Later, derive from `design.output.affected_repos`"*). So an
+impl workflow **can** fan out over tasks emitted from `tasks.json` at runtime.
 
-Therefore parallel execution of the DAG **must happen inside the `implementer` skill**,
-which reads `tasks.json` and dispatches parallel subagents wave-by-wave (via the
-`dispatching-parallel-agents` skill). The impl workflow YAML stays a single `implementer`
-step. `tasks.json` is a **plan the skill executes**, not a workflow the graph runs.
+What `for_each` does **not** do is honor `depends_on` — it starts every item at once, so a
+naive fan-out over all tasks would begin a dependent task before its prerequisite. The design
+bridges this by fanning out over **independent slices**: `tasks.json` groups tasks so that
+(a) no `depends_on` edge crosses a group and (b) groups have disjoint `writes`. `for_each`
+runs the slices concurrently; each item runs its slice's tasks **in dependency order
+internally**. Ordering that matters stays inside an item; only genuinely-independent work
+runs in parallel. `tasks.json` is thus both a **DAG** (intra-slice order) and a
+**fan-out source** (the slice list).
 
 ## Decisions
 
-- **Parallel engine = implementer skill.** The skill topologically sorts `tasks.json` into
-  waves and runs each wave's tasks as parallel subagents. (Workflow-level static parallel and
-  "ordering-hints-only, still sequential" were both rejected.)
+- **Parallel engine = Conductor `for_each` over independent slices.** Each impl workflow
+  gains a `for_each` step whose `source` is the slice array emitted from `tasks.json`; each
+  item invokes the implementer skill for **one slice** and runs that slice's tasks in
+  dependency order. (Rejected: `for_each` **per wave** — hardcodes a max DAG depth and
+  duplicates YAML across wave slots; and **DAG execution inside the skill** — flexible but
+  parallelism is invisible in the Conductor run graph.)
+- **Per-slice isolation + post-barrier merge.** Concurrent items edit in isolated git
+  worktrees (via `using-git-worktrees`, already wired as `shared.external.worktrees`); after
+  the `all_or_nothing` barrier a merge step recombines them — conflict-free because groups
+  have disjoint `writes`.
 - **Authoring folded into the design skills.** `backend-design` and `frontend-design` emit
   `tasks.json` alongside their LLD, reusing the code they already read (near-zero extra SDK
   cost). Authored pre-contract; acceptable because the backend **owns** its API surface and
@@ -78,11 +90,16 @@ Defined once in a shared reference file: `workflows/tasks.schema.json`.
     "reference": ["docs/technical/saved-search/lld/backend.md",
                   "contracts/saved-search/openapi.yaml", "CLAUDE.md"]
   },
+  "slices": [                             // the for_each fan-out source (mutually independent)
+    { "group_id": "g1", "task_ids": ["t1", "t2"] },   // task_ids in dependency order
+    { "group_id": "g2", "task_ids": ["t3"] }
+  ],
   "tasks": [
     {
       "id": "t1",
+      "group_id": "g1",
       "title": "SavedSearch schema + migration",
-      "depends_on": [],                    // DAG edges — dependents wait for these ids
+      "depends_on": [],                    // DAG edges — must stay WITHIN the same group
       "reads": [],                         // delta files beyond context_manifest.read_once
       "writes": ["src/db/models.py", "migrations/0007_saved_search.py"],
       "test": "tests/db/test_saved_search_model.py",  // failing test written first
@@ -91,12 +108,24 @@ Defined once in a shared reference file: `workflows/tasks.schema.json`.
     },
     {
       "id": "t2",
+      "group_id": "g1",
       "title": "Service create/list",
-      "depends_on": ["t1"],
+      "depends_on": ["t1"],                // same group as t1 — runs after t1 in-item
       "reads": ["src/searches/repository.py"],
       "writes": ["src/searches/service.py"],
       "test": "tests/searches/test_service.py",
       "standards": ["validation", "idempotency"],
+      "needs_human_gate": false
+    },
+    {
+      "id": "t3",
+      "group_id": "g2",
+      "title": "Audit-log endpoint (independent slice)",
+      "depends_on": [],
+      "reads": ["src/audit/router.py"],
+      "writes": ["src/audit/handlers.py"],
+      "test": "tests/audit/test_handlers.py",
+      "standards": ["security", "observability"],
       "needs_human_gate": false
     }
   ]
@@ -107,12 +136,19 @@ Every task retains the fields `backend-tasks` already mandates — `id`, `title`
 `standards` (subset of {security, backward-compat, rate-limiting, idempotency, validation,
 observability, migrations, performance}), `needs_human_gate` — plus:
 
-- `depends_on: [id]` — DAG edges. Empty = eligible in the first wave.
+- `group_id` — which independent slice the task belongs to. **Invariant:** every
+  `depends_on` edge stays within one group; groups never share a `writes` path.
+- `depends_on: [id]` — DAG edges (intra-group only). Empty = runs first within its slice.
 - `reads: [path]` — files this task needs **beyond** the shared manifest.
 - `writes: [path]` — files this task creates/edits. Basis of the parallel-safety invariant.
 
-QA tasks use the same shape; `depends_on` is usually empty (scenarios are independent),
-`writes` are the spec files, `reads` are fixtures/page objects, `test` is the scenario id.
+`slices` is the precomputed fan-out source: one entry per group, `task_ids` in dependency
+order. The authoring skill derives it from the DAG (weakly-connected components), so the impl
+`for_each` iterates it directly.
+
+QA tasks use the same shape; each scenario is typically its own single-task group (scenarios
+are independent), `writes` are the spec files, `reads` are fixtures/page objects, `test` is
+the scenario id.
 
 ## Authoring changes (design phase)
 
@@ -129,38 +165,53 @@ QA tasks use the same shape; `depends_on` is usually empty (scenarios are indepe
 
 ## Consumption & execution (impl phase)
 
-The `implementer` skills (`backend-implement`, `frontend-implement`) gain an execution
-protocol:
+Execution splits across the workflow (fan-out) and the skill (one slice per item).
 
-1. **Locate or author.** If `.sdlc/<slug>/<stack>/tasks.json` exists (from the design phase),
-   use it. Otherwise author it via the fallback (`backend-tasks`), then continue.
-2. **Load once.** Read `context_manifest.read_once` **and** `context_manifest.reference` in a
+**Workflow (`backend_impl.yaml` / `frontend_impl.yaml`):**
+
+1. **`tasks` step — locate or author.** If `.sdlc/<slug>/<stack>/tasks.json` exists (from the
+   design phase), load it; otherwise author it via the fallback (`backend-tasks`, JSON). The
+   step returns `slices` (the fan-out array) and `tasks_path`.
+2. **`implement` `for_each` step.** `source: {{ tasks.output.slices }}`, `as: slice`,
+   `max_concurrent: N`, `failure_mode: all_or_nothing`. Each item runs in its own git worktree
+   and invokes the implementer skill with `group_id = slice.group_id` and `tasks_path`.
+3. **`merge_slices` step (post-barrier).** After all items succeed, merge the per-slice
+   worktrees back onto the stack branch — conflict-free by the disjoint-`writes` invariant.
+4. Downstream `unit_tests` → `contract_check` → `reviewers` → `fix` steps are **unchanged**;
+   they run once, after the merge, over the whole branch.
+
+**Skill (per `for_each` item — implements ONE slice):**
+
+1. **Load once.** Read `context_manifest.read_once` **and** `context_manifest.reference` in a
    **single batched call** — one `Bash` `cat` over all paths (both lists concatenated) with
-   `=== <path> ===` delimiters — instead of N `Read` calls. (`read_once` = code the tasks
-   edit against; `reference` = the LLD, contract, and repo conventions the tasks must honor.
-   Both are loaded together in the one batched read.)
-3. **Topological waves.** Sort tasks by `depends_on` into waves (wave = all tasks whose
-   prerequisites are already complete).
-4. **Dispatch a wave.** Run the wave's tasks as **parallel subagents** via the
-   `dispatching-parallel-agents` skill. Each subagent receives its task spec + a pointer to
-   the already-loaded shared context, batch-reads its own `reads` delta in one call, and does
-   test-first TDD for that task (write failing `test` → implement → refactor).
-5. **Barrier + advance.** Wait for the wave, run the targeted tests, then start the next wave.
-6. Downstream test/verify/review/fix steps in the workflow are unchanged.
+   `=== <path> ===` delimiters — instead of N `Read` calls. (`read_once` = code the tasks edit
+   against; `reference` = the LLD, contract, and repo conventions the tasks must honor.)
+2. **Run the slice in order.** For each `task_id` in the slice's `task_ids` (already dependency
+   -ordered), batch-read the task's `reads` delta, then do test-first TDD (write failing
+   `test` → implement → refactor) before the next task.
+3. **Stop at gates.** A task with `needs_human_gate: true` surfaces for approval before it runs
+   (migrations, auth, payments, prod config, deps) — same gate rule as today, keyed off the flag.
+
+**QA (`qa.yaml`):** `author_tests` emits `tasks.json` (scenario groups) and returns `slices`;
+an `authoring` `for_each` writes the scenario specs in parallel; the existing `run_e2e` script
+then runs the whole suite once (unchanged).
 
 ## Parallel-safety & SDK-call budget rules
 
-- **Disjoint writes per wave (correctness invariant).** Any two tasks in the same wave MUST
-  have **non-overlapping `writes`**. The authoring skill enforces this: if two otherwise-
-  independent tasks touch the same file, it adds a synthetic `depends_on` edge to serialize
-  them. This is what makes concurrent edits safe.
-- **Parallelism is across slices, not within one.** TDD ordering inside a slice stays a
-  dependency chain; only independent slices run concurrently.
-- **`needs_human_gate` tasks** are surfaced before their wave runs (migrations, auth,
-  payments, prod config, deps) — same gate rule as today, now keyed off the flag in the JSON.
-- **Budget.** The parent implementer session ≈ 1 batched manifest read + wave dispatches +
-  test runs. Each subagent is its own session with its own budget, so fan-out **lowers**
-  per-session call count rather than raising it. Target: ≤ 50 SDK calls per session.
+- **Disjoint writes across groups (correctness invariant).** Two different groups MUST have
+  **non-overlapping `writes`**, and no `depends_on` edge may cross a group. The authoring skill
+  enforces this: if two tasks share a `writes` path or have a dependency between them, they are
+  placed in the **same** group (serialized in-item). This is what makes concurrent slices safe.
+- **Parallelism is across slices, not within one.** Intra-slice TDD/dependency order is
+  sequential inside the `for_each` item; only independent slices run concurrently.
+- **Worktree isolation + merge.** Each `for_each` item edits an isolated worktree; the
+  post-barrier `merge_slices` step recombines them (conflict-free by the invariant above).
+- **`needs_human_gate` tasks** surface before they run (migrations, auth, payments, prod
+  config, deps) — same gate rule as today, keyed off the flag in the JSON.
+- **Budget.** Each `for_each` item is its own agent session with its own budget: it batch-reads
+  its context once and implements only its slice, so per-session calls stay well under the
+  target of **≤ 50 SDK calls per session**. Trade-off vs a single shared session: the manifest
+  is re-read once per slice rather than once total, but each read is small and bounded.
 
 ## Files touched
 
@@ -169,27 +220,31 @@ protocol:
 - `docs/superpowers/specs/2026-07-06-tasks-json-dag-design.md` — this spec.
 
 **Edited — skills**
-- `skills/backend-design/SKILL.md` — emit `tasks.json`; return `tasks_path`.
-- `skills/frontend-design/SKILL.md` — emit `tasks.json`; return `tasks_path`.
-- `skills/qa-automation/SKILL.md` — emit `tasks.json` (flat scenarios + fixture manifest).
-- `skills/backend-implement/SKILL.md` — consume `tasks.json`: batched manifest read + wave-based
-  parallel subagent dispatch; fallback-author if absent.
-- `skills/frontend-implement/SKILL.md` — same consumption protocol.
-- `skills/backend-tasks/SKILL.md` — emit JSON (schema above); role narrowed to fallback authoring.
+- `skills/backend-design/SKILL.md` — emit `tasks.json` (incl. `slices`); return `tasks_path`.
+- `skills/frontend-design/SKILL.md` — emit `tasks.json` (incl. `slices`); return `tasks_path`.
+- `skills/qa-automation/SKILL.md` — emit `tasks.json` (scenario groups + fixture manifest);
+  return `slices`.
+- `skills/backend-implement/SKILL.md` — consume `tasks.json` **for one slice** (`group_id`
+  input): batched manifest read + in-order TDD; fallback-author if absent.
+- `skills/frontend-implement/SKILL.md` — same per-slice consumption protocol.
+- `skills/backend-tasks/SKILL.md` — emit JSON (schema above, incl. `slices`); role narrowed to
+  fallback authoring.
 
 **Edited — workflows**
-- `workflows/backend_impl.yaml` — `tasks` step → "load-or-author `tasks.json`"; `implementer`
-  prompt → consume the DAG.
-- `workflows/frontend_impl.yaml` — same.
-- `workflows/qa.yaml` — `author_tests` emits `tasks.json`.
+- `workflows/backend_impl.yaml` — `tasks` step returns `slices`; replace the single
+  `implementer` step with an `implement` **`for_each`** over `slices` (worktree-isolated,
+  `all_or_nothing`) + a `merge_slices` step before `unit_tests`.
+- `workflows/frontend_impl.yaml` — same `for_each` + merge structure.
+- `workflows/qa.yaml` — `author_tests` emits `tasks.json`/`slices`; add an `authoring`
+  `for_each` over scenario groups before `run_e2e`.
 
 **Edited — config**
-- `skills.config.yaml` — add `tasks` artifact paths (`.sdlc/<slug>/<stack>/tasks.json`);
-  register `dispatching-parallel-agents` as the impl parallel-dispatch external skill.
+- `skills.config.yaml` — add `tasks` artifact paths (`.sdlc/<slug>/<stack>/tasks.json`).
+  (`using-git-worktrees` is already registered as `shared.external.worktrees` for per-slice
+  isolation.)
 
 ## Out of scope
 
-- Dynamic Conductor fan-out (impossible with the static graph — that's why parallelism lives
-  in the skill).
+- `for_each` **per-wave** execution (finer parallelism but hardcodes max DAG depth).
 - Cross-stack parallelism beyond what `main.yaml`/`dispatch.yaml` already provide.
-- Changing the test/verify/review/fix steps of the impl pipelines.
+- Changing the test/verify/review/fix steps of the impl pipelines (they run once, post-merge).
