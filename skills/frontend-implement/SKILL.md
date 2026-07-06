@@ -35,6 +35,20 @@ This is distinct from **Plan mode** (produce the task/UI-state list and stop). I
 `tasks.json` exists (standalone run), author it first (plan mode), then proceed over its
 slices sequentially in this one session.
 
+### Plan mode / fallback authoring (emit tasks.json)
+This is the **fallback** author: the design phase normally emits `tasks.json` via
+`/frontend-design`. Run this only when `.sdlc/<slug>/frontend/tasks.json` is absent (e.g. a
+standalone `/frontend-impl` run with no design phase, or when invoked in plan mode).
+
+When invoked in plan mode with no `tasks.json` present, write
+`.sdlc/<slug>/frontend/tasks.json` conforming to `workflows/tasks.schema.json`:
+`context_manifest` (batched-read files), `tasks[]` (`id`, `group_id`, `title`, `depends_on`
+intra-group only, `reads`, `writes`, `test`, `standards`, `needs_human_gate`), and `slices[]`
+(one entry per independent group — two tasks share a group iff one depends on the other OR
+they write a common file). Validate with
+`python3 workflows/validate_tasks.py .sdlc/<slug>/frontend/tasks.json` (must print `OK`).
+Return `tasks_path`, `slices`.
+
 ## Steps
 1. **Types/API client** from the contract (generate or hand-write; single source of truth).
 2. **State & data-fetching** via the existing layer; define cache keys & invalidation.
