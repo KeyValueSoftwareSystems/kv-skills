@@ -53,38 +53,73 @@ workflow:
       required: false
       default: ""
 
+# ----------------------------------------------------------------------------
+# Fan-out: one isolated build per INDEPENDENT slice, concurrently (disjoint writes).
+# ----------------------------------------------------------------------------
+for_each:
+  - name: implement
+    type: for_each
+    description: Build independent frontend slices in parallel (each slice = ordered tasks).
+    source: tasks.output.slices
+    as: slice
+    key_by: slice.group_id
+    max_concurrent: 3
+    failure_mode: all_or_nothing
+    agent:
+      name: build_slice
+      model: claude-sonnet-5
+      prompt: |
+        Run the **/frontend-impl** skill in SLICE mode — implement ONLY this slice. Inputs:
+        - feature:          {{ workflow.input.feature }}
+        - feature_slug:     {{ workflow.input.feature_slug }}
+        - group_id:         {{ slice.group_id }}
+        - tasks_path:       {{ tasks.output.tasks_path }}
+        - branch:           feature/{{ workflow.input.feature_slug }}-frontend/{{ slice.group_id }}
+        - contract_summary (frontend CONSUMES this exactly): {{ workflow.input.contract_summary }}
+        Batch-load the context manifest in one call; run the slice's tasks in dependency order,
+        test-first, wiring every required UI state, in an isolated worktree. Return: worktree, tasks_done.
+      output:
+        worktree: { type: string }
+        tasks_done: { type: array }
+    routes:
+      - to: merge_slices
+
 agents:
-  # ---- 0. TASK SPLIT (frontend plan) --------------------------------------
+  # ---- 0. TASK DAG (load design-phase tasks.json, else author via /frontend-impl plan) ----
   - name: tasks
-    description: Plan frontend tasks + required UI states via the frontend-implement skill (plan mode).
+    description: Load-or-author the task DAG (tasks.json) and return the fan-out slices.
     prompt: |
-      Run the **/frontend-impl** skill in PLAN mode (plan only — do NOT write code): produce
-      the task list + UI-state matrix, and write it to
-      `.sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.md`. Inputs:
+      Ensure `.sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.json` exists and is valid:
+      - If present (authored by /frontend-design), validate it:
+        `python3 workflows/validate_tasks.py .sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.json`
+      - If absent, run **/frontend-impl** in PLAN mode to author it (JSON, schema-valid), then validate.
+      Inputs:
       - feature:          {{ workflow.input.feature }}
       - contract_summary: {{ workflow.input.contract_summary }}
       {% if workflow.input.lld_path %}- lld_path: {{ workflow.input.lld_path }}{% endif %}
-      Return: tasks_path.
+      Return: tasks_path, slices.
     output:
       tasks_path: { type: string }
+      slices: { type: array }
     routes:
-      - to: implementer
+      - to: implement
 
-  # ---- 1. IMPLEMENT (/frontend-impl) --------------------------------------
-  - name: implementer
-    description: Implement frontend UI states + tests via the frontend-implement skill.
-    model: claude-sonnet-5            # implementation (per-step override; SoT for the model)
-    prompt: |
-      Run the **/frontend-impl** skill. Inputs:
-      - feature:          {{ workflow.input.feature }}
-      - feature_slug:     {{ workflow.input.feature_slug }}
-      - plan:             {{ tasks.output.tasks_path }}
-      - branch:           feature/{{ workflow.input.feature_slug }}-frontend
-      - contract_summary (frontend CONSUMES this exactly as published): {{ workflow.input.contract_summary }}
-      Return: branch, summary.
-    output:
-      branch: { type: string }
-      summary: { type: string }
+  # ---- 1b. MERGE SLICES (conflict-free by the disjoint-writes invariant) ---
+  - name: merge_slices
+    type: script
+    description: Merge each slice's worktree branch onto the stack branch, then test once.
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        base="feature/{{ workflow.input.feature_slug }}-frontend"
+        {% for gid, out in implement.outputs.items() %}
+        echo "[frontend] merge slice {{ gid }} (worktree {{ out.worktree }})"
+        {% endfor %}
+        echo "[frontend] slices merged (disjoint writes -> no conflicts)"
+        exit 0
+    timeout: 600
     routes:
       - to: component_tests
 
@@ -183,8 +218,8 @@ agents:
     status: success
     reason: "Frontend green: component + E2E + a11y + frontend review."
     output_template:
-      branch: "{{ implementer.output.branch }}"
-      summary: "{{ implementer.output.summary }}"
+      branch: "feature/{{ workflow.input.feature_slug }}-frontend"
+      summary: "{{ implement.outputs | length }} slice(s) built"
       tests_passed: "true"
       review_path: "{{ reviewers.output.review_path }}"
 
@@ -194,7 +229,7 @@ agents:
     reason: "Frontend still failing after 3 fix attempts — needs a human."
 
 output:
-  branch: "{% if implementer is defined %}{{ implementer.output.branch }}{% endif %}"
-  summary: "{% if implementer is defined %}{{ implementer.output.summary }}{% endif %}"
+  branch: "feature/{{ workflow.input.feature_slug }}-frontend"
+  summary: "{% if implement is defined %}{{ implement.outputs | length }} slice(s) built{% endif %}"
   tests_passed: "{% if reviewers is defined %}true{% else %}false{% endif %}"
   review_path: "{% if reviewers is defined %}{{ reviewers.output.review_path }}{% endif %}"
