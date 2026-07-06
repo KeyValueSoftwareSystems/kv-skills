@@ -59,7 +59,16 @@ Read `skills.config.yaml` → `qa.external.generator` (e.g. `anthropics:webapp-t
 
 ## Emit tasks.json (parallel scenario authoring)
 Write `.sdlc/<slug>/qa/tasks.json` conforming to `workflows/tasks.schema.json`, with
-`"stack": "qa"`. Scenarios are independent, so each scenario is its **own single-task group**:
+`"stack": "qa"`. Scenarios are independent, so each scenario is its **own single-task group**.
+
+**Author it in one shot, then refine once.** Compose the entire tasks.json — manifest, every
+`tasks[]` entry, and `slices[]` — in a single `Write`. Do **not** stub the file and grow it with
+successive `Edit`s; assemble the whole structure in memory first and emit it once. After the
+one `Write`, run the validator (below): if it prints `OK` you are done; if it fails, make **one**
+corrective `Edit` (or a single rewriting `Write`) and re-validate. Repeat only to fix validation
+errors, never to build the file up incrementally.
+
+Fields:
 - `context_manifest.read_once` = shared fixtures / page objects / test helpers the specs use;
   `reference` = the acceptance-criteria path and the contract summary.
 - One `tasks[]` entry per scenario: `id`, its own `group_id`, `title` (the journey), empty

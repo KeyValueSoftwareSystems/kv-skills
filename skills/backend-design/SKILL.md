@@ -71,7 +71,16 @@ return sourced findings you can cite in the LLD. If `none`, design from the code
 ## Emit tasks.json (the parallel task DAG)
 Write `.sdlc/<slug>/backend/tasks.json` conforming to `workflows/tasks.schema.json`. It is
 the plan the backend impl phase fans out over — build it from the LLD you just wrote, reusing
-the files you already read (do not re-read the codebase):
+the files you already read (do not re-read the codebase).
+
+**Author it in one shot, then refine once.** Compose the entire tasks.json — manifest, every
+`tasks[]` entry, and `slices[]` — in a single `Write`. Do **not** stub the file and grow it with
+successive `Edit`s; assemble the whole structure in memory first and emit it once. After the
+one `Write`, run the validator (below): if it prints `OK` you are done; if it fails, make **one**
+corrective `Edit` (or a single rewriting `Write`) and re-validate. If that still fails, fix and
+re-validate as needed — but never build the file up incrementally.
+
+Fields:
 - `context_manifest.read_once` = the code files the tasks edit against; `reference` = this LLD
   path, the (pending) contract path, and `CLAUDE.md`/`AGENTS.md`.
 - One `tasks[]` entry per ≤1-commit slice, each with `id`, `group_id`, `title`, `depends_on`

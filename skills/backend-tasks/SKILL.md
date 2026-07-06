@@ -55,6 +55,11 @@ Superpowers pack, or `none`). If set, use it to produce bite-sized, verifiable t
 carry files + test + standards + risk as above. If `none`, plan in-pack.
 
 ## Output
+**Author it in one shot, then refine once** — compose the whole tasks.json (manifest, all
+`tasks[]`, `slices[]`) in a single `Write`; do not stub-and-grow it with successive `Edit`s.
+Validate once; if it fails, make one corrective edit and re-validate (repeat only to fix
+validation errors, never to build the file up incrementally).
+
 Write the DAG to `.sdlc/<slug>/backend/tasks.json` conforming to `workflows/tasks.schema.json`
 (same shape `/backend-design` emits): `context_manifest` (batched-read files), `tasks[]`
 (`id`, `group_id`, `title`, `depends_on` intra-group only, `reads`, `writes`, `test`,
