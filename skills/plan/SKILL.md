@@ -69,8 +69,10 @@ responsible** for the coverage above. Whatever the external skill does, ensure i
 alternatives with trade-offs, surfaced assumptions, and a pre-mortem. If `none`, do this
 yourself.
 ## Output
-Write `docs/technical/<slug>/hld.md` with the sections above. Return `hld_path`,
-`hld_summary` (2–3 sentences), and `open_questions`.
+Write `docs/technical/<slug>/hld.md` with the sections above, including an
+"Open questions" section. Return `hld_path` and `hld_summary` (2–3 sentences).
+Keep open questions in the HLD's "Open questions" section — do not return them as a
+separate structured output field.
 
 ## Definition of done
 Every section present; ≥2 options with trade-offs; NFRs and risks concrete (not "TBD");

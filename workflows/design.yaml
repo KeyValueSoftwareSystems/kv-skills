@@ -94,11 +94,11 @@ agents:
       - feature:      {{ workflow.input.feature }}
       - feature_slug: {{ workflow.input.feature_slug }}
       - prd_path:     {{ workflow.input.prd_path }}
-      Return: hld_path, hld_summary, open_questions.
+      Return: hld_path, hld_summary. (Capture any open questions in the HLD's
+      "Open questions" section — do NOT return them as a separate structured field.)
     output:
       hld_path: { type: string }
       hld_summary: { type: string }
-      open_questions: { type: string }
     routes:
       - to: assert_hld
 
@@ -130,7 +130,7 @@ agents:
 
       **Summary:** {{ author_hld.output.hld_summary }}
 
-      **Open questions:** {{ author_hld.output.open_questions }}
+      **Open questions:** see the "Open questions" section of the HLD above.
 
       Approve to proceed to detailed design (per-stack LLDs), request revisions, or reject.
     options:
@@ -209,7 +209,6 @@ agents:
 output:
   hld_path:  "docs/technical/{{ workflow.input.feature_slug }}/hld.md"
   hld_summary:    "{% if author_hld is defined %}{{ author_hld.output.hld_summary }}{% endif %}"
-  open_questions: "{% if author_hld is defined %}{{ author_hld.output.open_questions }}{% endif %}"
   backend_lld_path:  "docs/technical/{{ workflow.input.feature_slug }}/lld/backend.md"
   frontend_lld_path: "docs/technical/{{ workflow.input.feature_slug }}/lld/frontend.md"
   backend_tasks_path:  ".sdlc/{{ workflow.input.feature_slug }}/backend/tasks.json"
