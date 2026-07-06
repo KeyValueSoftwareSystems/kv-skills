@@ -65,8 +65,8 @@ Any workflow below also runs on its own — useful for re-running just one phase
 |----------|--------|---------------|
 | [`main.yaml`](workflows/main.yaml) | `conductor run main.yaml --web --input feature="…" --input feature_slug="…"` | Full pipeline: design → architecture review → implement (backend ∥ frontend) → QA → review pack, with a human gate at each approval point |
 | [`design.yaml`](workflows/design.yaml) | `conductor run workflows/design.yaml --web --input feature="…" --input feature_slug="…"` | HLD (`/plan`) → human approve → per-stack LLDs (backend ∥ frontend) → `/api-contract` |
-| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `conductor run backend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Backend: task split → implement (test-first) → unit/integration → contract verification → backend review |
-| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `conductor run frontend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Frontend: task split → implement UI states → component + E2E tests → a11y gate → frontend review |
+| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `conductor run backend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Backend: build the task DAG → fan out over independent slices (parallel, test-first) → merge → unit/integration → contract verification → backend review |
+| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `conductor run frontend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Frontend: build the task DAG → fan out over independent slices (parallel) → merge → component + E2E tests → a11y gate → frontend review |
 | [`qa.yaml`](workflows/qa.yaml) | `conductor run qa.yaml --input feature="…" --input feature_slug="…"` | QA automation: author acceptance-criteria E2E tests, run in a clean env |
 | [`dispatch.yaml`](workflows/dispatch.yaml) | (internal — used by `main.yaml`'s `for_each`) | Routes a build to `backend_impl.yaml` or `frontend_impl.yaml` by stack |
 
@@ -75,7 +75,8 @@ Any workflow below also runs on its own — useful for re-running just one phase
 > The test / merge / verify shell steps in the workflows are **POC stubs** (`echo` + exit 0).
 > Wire them to your real test runner and `kv up` / `kv down` before relying on the pipeline's
 > green/red result. Conductor also needs the `claude-agent-sdk` provider — the installer sets
-> this up when `uv` is present.
+> this up when `uv` is present. The per-stack parallel fan-out (`for_each` over task-DAG
+> slices) is new — validate it against your Conductor runtime before relying on it.
 
 ### As skills (you orchestrate manually)
 
@@ -95,7 +96,7 @@ review each artifact before moving to the next:
 | `plan` | `/plan` | no | High-level design (HLD): options, choice, risks |
 | `backend-design` / `frontend-design` | `/backend-design` · `/frontend-design` | no | Author the per-stack low-level design (LLD) — how the feature fits each stack |
 | `api-contract` | `/api-contract` | no | Reconcile the LLDs into the OpenAPI contract + acceptance criteria |
-| `backend-tasks` | `/backend-tasks` | no | Split scope into ordered tasks + test plan |
+| `backend-tasks` | `/backend-tasks` | no | Author the task DAG (`tasks.json`) — ordered tasks grouped into independent slices (fallback when the design phase didn't emit it) |
 | `backend-implement` | `/backend-impl` | yes | Implement to the contract, test-first, to backend standards |
 | `frontend-implement` | `/frontend-impl` | yes | Implement UI states + tests to frontend standards |
 | `qa-automation` | `/qa` | tests | Critical-journey E2E from acceptance criteria |
@@ -116,7 +117,7 @@ destructive.
 feature → design phase ─ HLD → [approve]
                          → per-stack LLDs (backend ∥ frontend) → /api-contract
         → architecture-review → [approve]
-        → implement (backend ∥ frontend: tasks → code → tests → verify → review)
+        → implement (backend ∥ frontend: task DAG → parallel slices → merge → tests → verify → review)
         → integrate → QA → review pack → [approve → release]
 ```
 
@@ -124,8 +125,12 @@ The whole design phase is one workflow ([workflows/design.yaml](workflows/design
 authors the HLD, pauses for human approval, then `backend-design` and `frontend-design` each
 author one LLD for their stack (`docs/technical/<slug>/lld/`), and `/api-contract` reconciles
 them into the cross-repo contract (`contracts/<slug>/`). A human reviews the LLDs + contract
-at the next gate. Per-run proof lands under `.sdlc/`; exact paths are in `skills.config.yaml`
-under `artifacts:`.
+at the next gate. The design skills also emit a machine-readable **task DAG**
+(`.sdlc/<slug>/<stack>/tasks.json`, validated against
+[`workflows/tasks.schema.json`](workflows/tasks.schema.json) by
+[`workflows/validate_tasks.py`](workflows/validate_tasks.py)) that the implementation phase
+fans out over — independent slices run in parallel, dependent tasks in order. Per-run proof
+lands under `.sdlc/`; exact paths are in `skills.config.yaml` under `artifacts:`.
 
 ## Configure
 

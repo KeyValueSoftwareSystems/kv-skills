@@ -7,7 +7,8 @@
 # Composed by main.yaml (via dispatch.yaml) per affected stack. Also `/backend-impl`.
 #
 # Flow (matches the guide: task split -> execute -> tests -> verify -> reviewer):
-#   tasks (/backend-tasks) -> implementer (/backend-impl, test-first)
+#   tasks (load-or-author tasks.json) -> implement (for_each over independent slices,
+#   parallel) -> merge_slices -> tests -> verify -> review
 #     -> unit+integration -> contract verification   (deterministic gates)
 #       -> backend review (/backend-review)          ==> reviews/summary.md
 # A failed check routes to the `fix` step (/fix), which fixes + re-verifies in one
@@ -54,38 +55,82 @@ workflow:
       required: false
       default: ""
 
+# ----------------------------------------------------------------------------
+# Fan-out: one isolated build per INDEPENDENT slice, concurrently. Each slice's
+# tasks are dependency-ordered inside the item (the skill runs them in order);
+# groups are mutually independent (disjoint writes — validated), so parallel is safe.
+# ----------------------------------------------------------------------------
+# NOTE: this for_each uses a prompt-only inline agent (unlike main.yaml's type:workflow shape).
+# Provisional pending Conductor validation — if the runtime rejects it, wrap the slice/scenario
+# build in a one-step sub-workflow (the prompt is unchanged).
+for_each:
+  - name: implement
+    type: for_each
+    description: Build independent task slices in parallel (each slice = ordered tasks).
+    source: tasks.output.slices
+    as: slice
+    key_by: slice.group_id
+    max_concurrent: 3
+    failure_mode: all_or_nothing
+    agent:
+      name: build_slice
+      model: claude-sonnet-5
+      prompt: |
+        Run the **/backend-impl** skill in SLICE mode — implement ONLY this slice. Inputs:
+        - feature:          {{ workflow.input.feature }}
+        - feature_slug:     {{ workflow.input.feature_slug }}
+        - group_id:         {{ slice.group_id }}
+        - tasks_path:       {{ tasks.output.tasks_path }}
+        - branch:           feature/{{ workflow.input.feature_slug }}-backend-{{ slice.group_id }}
+        - contract_summary (backend OWNS this — implement it exactly): {{ workflow.input.contract_summary }}
+        Batch-load the context manifest in one call; run the slice's tasks in dependency order,
+        test-first, in an isolated git worktree on the branch above. Return: worktree, tasks_done.
+      output:
+        worktree: { type: string }
+        tasks_done: { type: array }
+    routes:
+      - to: merge_slices
+
 agents:
-  # ---- 0. TASK SPLIT (/backend-tasks -> writing-plans) --------
+  # ---- 0. TASK DAG (load design-phase tasks.json, else author via /backend-tasks) ----
   - name: tasks
-    description: Split approved scope into ordered tasks via the backend-tasks skill.
+    description: Load-or-author the task DAG (tasks.json) and return the fan-out slices.
     prompt: |
-      Run the **/backend-tasks** skill. Inputs:
+      Ensure `.sdlc/{{ workflow.input.feature_slug }}/backend/tasks.json` exists and is valid:
+      - If present (authored by /backend-design in the design phase), validate it:
+        `python3 workflows/validate_tasks.py .sdlc/{{ workflow.input.feature_slug }}/backend/tasks.json`
+      - If absent, run the **/backend-tasks** skill to author it (JSON, schema-valid), then validate.
+      Inputs:
       - feature:          {{ workflow.input.feature }}
       - feature_slug:     {{ workflow.input.feature_slug }}
       - contract_summary: {{ workflow.input.contract_summary }}
       {% if workflow.input.lld_path %}- lld_path: {{ workflow.input.lld_path }}{% endif %}
-      Return: tasks_path, risky.
+      Return: tasks_path, slices (the `slices` array from tasks.json), risky.
     output:
       tasks_path: { type: string }
+      slices: { type: array }
       risky: { type: boolean }
     routes:
-      - to: implementer
+      - to: implement
 
-  # ---- 1. IMPLEMENT (/backend-impl, test-first) ---------------------------
-  - name: implementer
-    description: Implement backend against the contract (test-first) via the backend-implement skill.
-    model: claude-sonnet-5            # implementation (per-step override; SoT for the model)
-    prompt: |
-      Run the **/backend-impl** skill. Inputs:
-      - feature:          {{ workflow.input.feature }}
-      - feature_slug:     {{ workflow.input.feature_slug }}
-      - tasks:            {{ tasks.output.tasks_path }}
-      - branch:           feature/{{ workflow.input.feature_slug }}-backend
-      - contract_summary (backend OWNS this — implement it exactly): {{ workflow.input.contract_summary }}
-      Return: branch, summary.
-    output:
-      branch: { type: string }
-      summary: { type: string }
+  # ---- 1b. MERGE SLICES (conflict-free by the disjoint-writes invariant) ---
+  - name: merge_slices
+    type: script
+    description: Merge each slice's worktree branch onto the stack branch, then run tests once.
+    command: bash
+    args:
+      - "-c"
+      - |
+        set -uo pipefail
+        base="feature/{{ workflow.input.feature_slug }}-backend"
+        echo "[backend] git checkout $base"
+        {% for gid, out in implement.outputs.items() %}
+        echo "[backend] merge slice {{ gid }} (worktree {{ out.worktree }})"
+        # Real: git merge --no-ff "$base/{{ gid }}" -m "merge slice {{ gid }}"
+        {% endfor %}
+        echo "[backend] slices merged (disjoint writes -> no conflicts)"
+        exit 0
+    timeout: 600
     routes:
       - to: unit_tests
 
@@ -173,8 +218,8 @@ agents:
     status: success
     reason: "Backend green: tests + contract + backend review."
     output_template:
-      branch: "{{ implementer.output.branch }}"
-      summary: "{{ implementer.output.summary }}"
+      branch: "feature/{{ workflow.input.feature_slug }}-backend"
+      summary: "{{ implement.outputs | length }} slice(s) built"
       tests_passed: "true"
       review_path: "{{ reviewers.output.review_path }}"
 
@@ -184,7 +229,7 @@ agents:
     reason: "Backend still failing after 3 fix attempts — needs a human."
 
 output:
-  branch: "{% if implementer is defined %}{{ implementer.output.branch }}{% endif %}"
-  summary: "{% if implementer is defined %}{{ implementer.output.summary }}{% endif %}"
+  branch: "feature/{{ workflow.input.feature_slug }}-backend"
+  summary: "{% if implement is defined %}{{ implement.outputs | length }} slice(s) built{% endif %}"
   tests_passed: "{% if reviewers is defined %}true{% else %}false{% endif %}"
   review_path: "{% if reviewers is defined %}{{ reviewers.output.review_path }}{% endif %}"

@@ -153,9 +153,10 @@ agents:
       - feature:      {{ workflow.input.feature }}
       - feature_slug: {{ workflow.input.feature_slug }}
       - hld_path:     {{ author_hld.output.hld_path }}
-      Return: lld_path.
+      Return: lld_path, tasks_path.
     output:
       lld_path: { type: string }
+      tasks_path: { type: string }
 
   - name: frontend_design
     description: Author the frontend LLD via the frontend-design skill.
@@ -164,9 +165,10 @@ agents:
       - feature:      {{ workflow.input.feature }}
       - feature_slug: {{ workflow.input.feature_slug }}
       - hld_path:     {{ author_hld.output.hld_path }}
-      Return: lld_path.
+      Return: lld_path, tasks_path.
     output:
       lld_path: { type: string }
+      tasks_path: { type: string }
 
   # ---- 4. CONTRACT (/api-contract) ----------------------------------------
   - name: contract
@@ -210,6 +212,8 @@ output:
   open_questions: "{% if author_hld is defined %}{{ author_hld.output.open_questions }}{% endif %}"
   backend_lld_path:  "docs/technical/{{ workflow.input.feature_slug }}/lld/backend.md"
   frontend_lld_path: "docs/technical/{{ workflow.input.feature_slug }}/lld/frontend.md"
+  backend_tasks_path:  ".sdlc/{{ workflow.input.feature_slug }}/backend/tasks.json"
+  frontend_tasks_path: ".sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.json"
   contract_path: "contracts/{{ workflow.input.feature_slug }}/openapi.yaml"
   contract_summary:    "{% if contract is defined %}{{ contract.output.contract_summary }}{% endif %}"
   affected_repos:      "{% if contract is defined %}{{ contract.output.affected_repos | json }}{% endif %}"
