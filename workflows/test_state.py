@@ -110,5 +110,51 @@ class StateOpsTest(unittest.TestCase):
         self.assertEqual(sorted(recorded), sorted(steps))
 
 
+class CliTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cwd = Path(self._tmp.name)
+        (self.cwd / "art.md").write_text("content\n")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, *args):
+        import subprocess
+        import sys as _sys
+        script = str(Path(__file__).with_name("state.py"))
+        return subprocess.run(
+            [_sys.executable, script, *args],
+            cwd=self.cwd, capture_output=True, text=True,
+        )
+
+    def test_check_missing_exits_1(self):
+        self.assertEqual(self._run("check", "--slug", "s", "--step", "hld").returncode, 1)
+
+    def test_mark_then_check_exits_0(self):
+        m = self._run("mark", "--slug", "s", "--step", "hld", "--artifact", "art.md")
+        self.assertEqual(m.returncode, 0)
+        c = self._run("check", "--slug", "s", "--step", "hld")
+        self.assertEqual(c.returncode, 0)
+
+    def test_mark_missing_artifact_exits_1(self):
+        m = self._run("mark", "--slug", "s", "--step", "hld", "--artifact", "nope.md")
+        self.assertEqual(m.returncode, 1)
+
+    def test_reset_step_makes_check_fail_again(self):
+        self._run("mark", "--slug", "s", "--step", "hld", "--artifact", "art.md")
+        self._run("reset", "--slug", "s", "--step", "hld")
+        self.assertEqual(self._run("check", "--slug", "s", "--step", "hld").returncode, 1)
+
+    def test_reset_without_step_or_all_exits_2(self):
+        self.assertEqual(self._run("reset", "--slug", "s").returncode, 2)
+
+    def test_reset_multiple_steps(self):
+        self._run("mark", "--slug", "s", "--step", "hld", "--artifact", "art.md")
+        self._run("mark", "--slug", "s", "--step", "api", "--artifact", "art.md")
+        self._run("reset", "--slug", "s", "--step", "hld", "--step", "api")
+        self.assertEqual(self._run("check", "--slug", "s", "--step", "api").returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

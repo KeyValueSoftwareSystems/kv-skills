@@ -12,10 +12,12 @@ Usage:
 Exit codes: check -> 0 done / 1 not-done; mark -> 0 marked / 1 artifact missing;
 reset -> 0. See docs/superpowers/specs/2026-07-07-subworkflow-step-ledger-resume-design.md
 """
+import argparse
 import contextlib
 import fcntl
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -122,3 +124,51 @@ def reset(
             for s in steps or []:
                 data["steps"].pop(step_key(s, key), None)
         save_ledger(slug, data, root)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Per-step done ledger.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("check")
+    c.add_argument("--slug", required=True)
+    c.add_argument("--step", required=True)
+    c.add_argument("--key", default=None)
+
+    m = sub.add_parser("mark")
+    m.add_argument("--slug", required=True)
+    m.add_argument("--step", required=True)
+    m.add_argument("--key", default=None)
+    m.add_argument("--artifact", required=True)
+
+    r = sub.add_parser("reset")
+    r.add_argument("--slug", required=True)
+    r.add_argument("--step", action="append", default=[])
+    r.add_argument("--key", default=None)
+    r.add_argument("--all", action="store_true")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "check":
+        return 0 if is_done(args.slug, args.step, args.key) else 1
+
+    if args.cmd == "mark":
+        if mark_done(args.slug, args.step, args.artifact, args.key):
+            print(f"[state] done: {step_key(args.step, args.key)} -> {args.artifact}")
+            return 0
+        print(f"[state] artifact missing/empty, NOT marked: {args.artifact}", file=sys.stderr)
+        return 1
+
+    if args.cmd == "reset":
+        if not args.all and not args.step:
+            print("[state] reset needs --step or --all", file=sys.stderr)
+            return 2
+        reset(args.slug, args.step, args.all, args.key)
+        print(f"[state] reset: {'ALL' if args.all else ' '.join(args.step)}")
+        return 0
+
+    return 2  # pragma: no cover
+
+
+if __name__ == "__main__":
+    sys.exit(main())
