@@ -1,9 +1,15 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-import state
+# state.py lives in workflows/; this test was moved to testdata/, so add the
+# workflows dir to the import path before importing it.
+WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
+sys.path.insert(0, str(WORKFLOWS_DIR))
+
+import state  # noqa: E402
 
 
 class LedgerCoreTest(unittest.TestCase):
@@ -153,7 +159,7 @@ class CliTest(unittest.TestCase):
     def _run(self, *args):
         import subprocess
         import sys as _sys
-        script = str(Path(__file__).with_name("state.py"))
+        script = str(WORKFLOWS_DIR / "state.py")
         return subprocess.run(
             [_sys.executable, script, *args],
             cwd=self.cwd, capture_output=True, text=True,
