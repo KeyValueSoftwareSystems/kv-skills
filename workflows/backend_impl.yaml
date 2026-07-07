@@ -75,6 +75,7 @@ for_each:
     agent:
       name: build_slice
       model: claude-sonnet-5
+      max_agent_iterations: 100
       prompt: |
         Run the **/backend-impl** skill in SLICE mode — implement ONLY this slice. Inputs:
         - feature:          {{ workflow.input.feature }}

@@ -148,6 +148,7 @@ agents:
   # ---- 3. PER-STACK LLDs (parallel) ---------------------------------------
   - name: backend_design
     description: Author the backend LLD via the backend-design skill.
+    max_agent_iterations: 100
     prompt: |
       Run the **/backend-design** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
@@ -160,6 +161,7 @@ agents:
 
   - name: frontend_design
     description: Author the frontend LLD via the frontend-design skill.
+    max_agent_iterations: 100
     prompt: |
       Run the **/frontend-design** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
