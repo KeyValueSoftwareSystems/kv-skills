@@ -15,7 +15,14 @@ A **distributable pack**, not an application. It ships:
   human approval gates. `main.yaml` is the full pipeline; the others run one phase each.
 - **`skills.config.yaml`** (repo root) — the single source of truth for *which* skill (and which
   external helper skill) backs each SDLC slot. Read by **both** slash commands and Conductor.
-- **`install.sh`** — installs the pack + external Superpowers skills + Conductor into a user's repo.
+- **`install.sh`** — installs the pack + external Superpowers skills + Conductor into a user's repo,
+  and drops the **`bin/maestro`** run wrapper on PATH.
+- **`bin/maestro`** — the slug-only front door: `maestro <slug>` reads the PRD from
+  `features/<slug>/prd.md`, runs `conductor run` with a deterministic `--web-port` (`KV_WEB_PORT`,
+  default 8080), and passes the slug through. Defaults to `workflows/main.yaml`; override with
+  `--path=<file>` to run any individual or customised workflow. PRD resolution is done in-workflow
+  (design.yaml's `resolve_prd` set step), so a bare `conductor run` with `--input feature_slug=…`
+  works too.
 
 There is **no build and no app to run.** The "code" is prompts and YAML; the only executables
 are the Python helpers under `workflows/` (`validate_tasks.py`, `validate_open_questions.py`,
@@ -119,8 +126,13 @@ invalidate downstream steps — `reset` the step (or delete its artifact) to for
   re-implement behavior. Note the defensive `{% if <step> is defined %}` guards in `output:`
   blocks: the output block renders on *every* termination (including early `abort`), so any
   step-output reference must be guarded or it raises a TemplateError.
-- **Model choice lives on the workflow step** (`model:` field, e.g. `claude-opus-4-8` for
-  design/contract judgement; default is `claude-haiku-4-5`). Not in `skills.config.yaml`.
+- **One global default model.** Every workflow's `default_model:` is
+  `${KV_MODEL_DEFAULT:-claude-haiku-4-5}` and no step pins its own model, so all steps run the
+  same model. The single knob is `models.default` in `workflows/workflow.config.yaml`: the
+  `maestro` wrapper reads it and exports `KV_MODEL_DEFAULT` (Conductor resolves `${VAR:-…}` at
+  load; an explicit env var wins; a bare `conductor run` falls back to the baked haiku default).
+  For a one-off per-step model, add a literal `model:` to that step's YAML — it wins. Model
+  choice is not in `skills.config.yaml`.
 - The workflow test/merge/verify shell steps are **POC stubs** (`echo` + exit 0) — a downstream
   user wires them to their real runner. Don't mistake them for working test execution.
 - `.sdlc/` and `.kv/` are per-run proof output — gitignored, regenerable, never source.
