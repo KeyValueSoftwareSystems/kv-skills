@@ -9,7 +9,8 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # Fresh slug: hld not done -> guard exits 1 (would route to author_hld)
 $STATE check --slug "$SLUG" --step hld && fail "hld should be not-done on a fresh slug"
 
-# Seed an artifact and mark hld done -> guard exits 0 (would route to hld_approval)
+# Seed an artifact and mark hld done -> guard exits 0 (would route to serve, the
+# open-question loop, which falls through to hld_approval when nothing is open)
 mkdir -p "docs/technical/$SLUG"
 echo "# HLD" > "docs/technical/$SLUG/hld.md"
 $STATE mark --slug "$SLUG" --step hld --artifact "docs/technical/$SLUG/hld.md" || fail "mark hld"
