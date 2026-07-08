@@ -41,8 +41,7 @@ workflow:
 
   runtime:
     provider: claude-agent-sdk
-    default_model: ${KV_MODEL_DEFAULT:-claude-haiku-4-5}   # global default; see workflows/workflow.config.yaml `models:`
-
+    default_model: claude-haiku-4-5   # backstop for any agent without an explicit model:
   limits:
     max_iterations: 128            # headroom for the open-question loop (serve/ask/record/refine per question)
     timeout_seconds: 4200
@@ -61,6 +60,15 @@ workflow:
       description: >
         Path to the PRD artifact (assumed to exist). If empty, resolved by the
         `resolve_prd` step to `features/<slug>/prd.md` (the per-feature drop folder).
+    model:
+      type: object
+      required: false
+      default: {}
+      description: >
+        Per-agent model overrides, keyed by agent name (e.g.
+        {"author_hld":"claude-sonnet-5"}). Passed by the `maestro` wrapper from
+        maestro.config.yaml `models.agents`. Any agent not listed falls back to
+        claude-haiku-4-5, so a plain `conductor run` (no model input) uses defaults.
 
 # ----------------------------------------------------------------------------
 # Parallel LLD authoring: backend + frontend, concurrent (after HLD approval).
@@ -119,6 +127,7 @@ agents:
   # ---- 1. PLAN — author the HLD (/plan) -----------------------------------
   - name: author_hld
     description: Produce the high-level design (HLD) via the plan skill.
+    model: "{{ workflow.input.model.author_hld if workflow.input.model.author_hld is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/plan** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
@@ -220,6 +229,7 @@ agents:
 
   - name: refine_hld
     description: Fold answered questions into the HLD, then re-derive open questions.
+    model: "{{ workflow.input.model.refine_hld if workflow.input.model.refine_hld is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Refine the HLD at `docs/technical/{{ workflow.input.feature_slug }}/hld.md`
       using the answers in `.sdlc/{{ workflow.input.feature_slug }}/open-questions.json`.
@@ -309,6 +319,7 @@ agents:
   # ---- 3. PER-STACK LLDs (parallel) ---------------------------------------
   - name: backend_design
     description: Author the backend LLD via the backend-design skill.
+    model: "{{ workflow.input.model.backend_design if workflow.input.model.backend_design is defined else 'claude-haiku-4-5' }}"
     max_agent_iterations: 100
     prompt: |
       Run the **/backend-design** skill. Inputs:
@@ -322,6 +333,7 @@ agents:
 
   - name: frontend_design
     description: Author the frontend LLD via the frontend-design skill.
+    model: "{{ workflow.input.model.frontend_design if workflow.input.model.frontend_design is defined else 'claude-haiku-4-5' }}"
     max_agent_iterations: 100
     prompt: |
       Run the **/frontend-design** skill. Inputs:
@@ -369,6 +381,7 @@ agents:
   # ---- 4. CONTRACT (/api-contract) ----------------------------------------
   - name: contract
     description: Reconcile the per-stack LLDs into the cross-repo contract via the api-contract skill.
+    model: "{{ workflow.input.model.contract if workflow.input.model.contract is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/api-contract** skill (the per-stack LLDs have already been written — pass them).
       Inputs:

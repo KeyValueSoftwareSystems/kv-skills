@@ -47,7 +47,7 @@ accepts one is a regression.
   Every `external:` value is the bare discovery name of an installed skill (e.g. `brainstorming`,
   not `superpowers:brainstorming`), or `none` to fall back inline. Change behavior here, it changes
   everywhere. Model choice is **not** here — it's per-step `model:` in the workflow YAML.
-- `workflows/workflow.config.yaml` — **HOW** Conductor orchestrates/enforces (fix-loop cap,
+- `workflows/maestro.config.yaml` — **HOW** Conductor orchestrates/enforces (fix-loop cap,
   coverage gate, env lifecycle). Conductor-only; irrelevant to standalone slash commands.
 
 ## The SDLC flow (what the pack produces)
@@ -128,7 +128,7 @@ invalidate downstream steps — `reset` the step (or delete its artifact) to for
   step-output reference must be guarded or it raises a TemplateError.
 - **One global default model.** Every workflow's `default_model:` is
   `${KV_MODEL_DEFAULT:-claude-haiku-4-5}` and no step pins its own model, so all steps run the
-  same model. The single knob is `models.default` in `workflows/workflow.config.yaml`: the
+  same model. The single knob is `models.default` in `workflows/maestro.config.yaml`: the
   `maestro` wrapper reads it and exports `KV_MODEL_DEFAULT` (Conductor resolves `${VAR:-…}` at
   load; an explicit env var wins; a bare `conductor run` falls back to the baked haiku default).
   For a one-off per-step model, add a literal `model:` to that step's YAML — it wins. Model

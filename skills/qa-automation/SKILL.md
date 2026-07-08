@@ -40,7 +40,7 @@ not every path.
 - **Cross-service** — real contract, not mocks, in the clean stack for cross-service journeys.
 - **No weakened assertions** — self-healing may refresh selectors / re-run only; it must NOT
   weaken assertions, permissions, or expected behavior (enforced by
-  `workflow.config.yaml` → `gates.freeze_approved_tests`).
+  `maestro.config.yaml` → `gates.freeze_approved_tests`).
 - **Safe** — no real secrets or production data; seeded test data only.
 - **Reportable** — on failure, capture screenshot/trace/video and the failing step.
 

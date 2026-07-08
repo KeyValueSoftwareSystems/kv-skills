@@ -135,5 +135,5 @@ Done. Next:
       conductor run main.yaml --web \\
         --input feature="Add saved-search" --input feature_slug="saved-search"
   • Swap any behavior by editing skills.config.yaml (one file, everywhere).
-  • Set the default model / web port in workflows/workflow.config.yaml (KV_MODEL_DEFAULT / KV_WEB_PORT).
+  • Set the default model / web port in workflows/maestro.config.yaml (KV_MODEL_DEFAULT / KV_WEB_PORT).
 EOF

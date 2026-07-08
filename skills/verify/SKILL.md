@@ -23,7 +23,7 @@ proof artifacts below).
 ## Checks to run
 **Backend proof:** lint · typecheck · unit tests · integration tests · migration check
 (if applicable) · API contract (provider-side) validation · coverage vs
-`workflow.config.yaml` → `gates.coverage_threshold`.
+`maestro.config.yaml` → `gates.coverage_threshold`.
 **Frontend proof:** lint · typecheck · unit/component tests · build ·
 Storybook/component check (if available) · Playwright E2E · accessibility basics.
 

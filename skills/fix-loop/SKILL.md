@@ -7,7 +7,7 @@ allowed-tools: Read, Grep, Glob, Bash, Edit
 # fix-loop
 
 Fix failing checks with a **bounded** loop. **Maximum 3 autonomous attempts.** The cap is
-also enforced by the workflow (`workflow.config.yaml` → `fix_loop.max_attempts`) via a
+also enforced by the workflow (`maestro.config.yaml` → `fix_loop.max_attempts`) via a
 route-back counter — respect it whether run in a workflow or standalone.
 
 **Safety:** never run destructive commands (`rm -rf`, force-push, `DROP`/`TRUNCATE`) or write

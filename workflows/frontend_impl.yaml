@@ -27,7 +27,7 @@ workflow:
 
   runtime:
     provider: claude-agent-sdk
-    default_model: ${KV_MODEL_DEFAULT:-claude-haiku-4-5}   # global default; see workflows/workflow.config.yaml `models:`
+    default_model: claude-haiku-4-5   # backstop for any agent without an explicit model:
 
   limits:
     max_iterations: 32
@@ -52,6 +52,13 @@ workflow:
       type: string
       required: false
       default: ""
+    model:
+      type: object
+      required: false
+      default: {}
+      description: >
+        Per-agent model overrides, keyed by agent name. Any agent not listed
+        falls back to claude-haiku-4-5.
 
 # ----------------------------------------------------------------------------
 # Fan-out: one isolated build per INDEPENDENT slice, concurrently (disjoint writes).
@@ -70,6 +77,7 @@ for_each:
     failure_mode: all_or_nothing
     agent:
       name: build_slice
+      model: "{{ workflow.input.model.build_slice if workflow.input.model.build_slice is defined else 'claude-haiku-4-5' }}"
       max_agent_iterations: 100
       prompt: |
         Run the **/frontend-impl** skill in SLICE mode — implement ONLY this slice. Inputs:
@@ -91,6 +99,7 @@ agents:
   # ---- 0. TASK DAG (load design-phase tasks.json, else author via /frontend-impl plan) ----
   - name: tasks
     description: Load-or-author the task DAG (tasks.json) and return the fan-out slices.
+    model: "{{ workflow.input.model.tasks if workflow.input.model.tasks is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Ensure `.sdlc/{{ workflow.input.feature_slug }}/frontend/tasks.json` exists and is valid:
       - If present (authored by /frontend-design), validate it:
@@ -181,6 +190,7 @@ agents:
   # ---- FRONTEND REVIEW (/frontend-review) -
   - name: reviewers
     description: Run the frontend-review skill.
+    model: "{{ workflow.input.model.reviewers if workflow.input.model.reviewers is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/frontend-review** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
@@ -200,6 +210,7 @@ agents:
   # lives INSIDE the fix-loop skill. This step fixes AND re-verifies in one turn.
   - name: fix
     description: Bounded fix + re-verify via the fix-loop skill (cap enforced in the skill).
+    model: "{{ workflow.input.model.fix if workflow.input.model.fix is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/fix** skill (bounded root-cause loop; cap enforced in the skill). After
       fixing, re-run the failed checks (component + E2E + a11y) and return `resolved: true`

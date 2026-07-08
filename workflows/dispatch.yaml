@@ -15,7 +15,7 @@ workflow:
 
   runtime:
     provider: claude-agent-sdk
-    default_model: ${KV_MODEL_DEFAULT:-claude-haiku-4-5}   # global default; see workflows/workflow.config.yaml `models:`
+    default_model: claude-haiku-4-5   # backstop; this file has no provider agents of its own
 
   limits:
     max_iterations: 8
@@ -43,6 +43,11 @@ workflow:
       type: string
       required: false
       default: ""
+    model:
+      type: object
+      required: false
+      default: {}
+      description: Per-agent model overrides, forwarded to the impl sub-workflow.
 
 agents:
   - name: route
@@ -64,6 +69,7 @@ agents:
       contract_summary: "{{ workflow.input.contract_summary }}"
       contract_path: "{{ workflow.input.contract_path }}"
       lld_path: "{{ workflow.input.lld_path }}"
+      model: "{{ workflow.input.model | json }}"
     # Outputs come from the child pipeline's own `output:` block (a `type: workflow`
     # step must not redeclare output); surfaced via this file's `output:` mapping below.
     routes:
@@ -78,6 +84,7 @@ agents:
       contract_summary: "{{ workflow.input.contract_summary }}"
       contract_path: "{{ workflow.input.contract_path }}"
       lld_path: "{{ workflow.input.lld_path }}"
+      model: "{{ workflow.input.model | json }}"
     # Outputs come from the child pipeline's own `output:` block (a `type: workflow`
     # step must not redeclare output); surfaced via this file's `output:` mapping below.
     routes:

@@ -1,6 +1,6 @@
 # Maestro
 
-A ready-to-install pack of **AI skills** and a **Conductor workflow** that runs a feature
+A ready-to-install pack of **AI skills** and a **workflow orchestrator** that runs a feature
 through the KeyValue software-development lifecycle: high-level design → detailed design →
 implementation → review → QA → release — with a human approval at each gate.
 
@@ -10,7 +10,7 @@ Building a feature well means the same steps every time: design it, review the d
 implement to a contract, test it, review the code, QA it, ship it. This pack encodes those
 steps once so every developer runs them the same way.
 
-- **Run it your way.** Let Conductor orchestrate the whole pipeline end-to-end, or run each
+- **Run it your way.** Let [Conductor](https://github.com/microsoft/conductor) orchestrate the whole pipeline end-to-end, or run each
   step yourself as a slash command (`/plan`, `/api-contract`, `/backend-impl`, …) in Claude
   Code, Cursor, or Copilot.
 - **One place to change behavior.** Every step's behavior lives in its skill; which skill (and
@@ -56,64 +56,36 @@ same artifacts — it just drives the sequence.
 from your repo root:
 
 ```bash
-mkdir -p features/saved-search
-$EDITOR features/saved-search/prd.md                       # write the PRD here
-maestro saved-search                                       # default pipeline (workflows/main.yaml)
-maestro saved-search --path=workflows/design.yaml         # run any individual/custom workflow
+mkdir -p features/user-authentication
+$EDITOR features/user-authentication/prd.md               # write the PRD here
+maestro user-authentication                               # run full pipeline
+maestro user-authentication --path=workflows/design.yaml  # run design phase only
 ```
 
-`maestro` (installed by the installer) resolves the PRD at `features/<slug>/prd.md`, opens the
-dashboard at a **stable `http://127.0.0.1:8080`** (override with `KV_WEB_PORT`), and passes the
-slug through. It defaults to `workflows/main.yaml`; point it at any other workflow — a shipped
-phase or your own customised file — with **`--path=<file>`**. Extra Conductor flags go after
-`--`, e.g. `maestro saved-search -- --dry-run`.
+`maestro` (installed by the installer) resolves the PRD at `features/<slug>/prd.md` and runs the
+default pipeline at `http://127.0.0.1:8080` (set `web.port` in `maestro.config.yaml`). Use `--path=<file>`
+to run a specific workflow. Extra flags go after `--`, e.g. `maestro user-authentication -- --dry-run`.
 
-**The explicit way.** The same run, spelled out:
+Run individual workflows for specific phases:
 
-```bash
-cd workflows
-conductor validate main.yaml
-conductor run main.yaml --web --web-port 8080 \
-  --input feature="Add saved-search" --input feature_slug="saved-search"
-```
-
-Any workflow below also runs on its own — useful for re-running just one phase:
-
-| Workflow | Run it | What it does |
-|----------|--------|---------------|
-| [`main.yaml`](workflows/main.yaml) | `conductor run main.yaml --web --input feature="…" --input feature_slug="…"` | Full pipeline: design → architecture review → implement (backend ∥ frontend) → QA → review pack, with a human gate at each approval point |
-| [`design.yaml`](workflows/design.yaml) | `conductor run workflows/design.yaml --web --input feature="…" --input feature_slug="…"` | HLD (`/plan`) → human approve → per-stack LLDs (backend ∥ frontend) → `/api-contract` |
-| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `conductor run backend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Backend: build the task DAG → fan out over independent slices (parallel, test-first) → merge → unit/integration → contract verification → backend review |
-| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `conductor run frontend_impl.yaml --input feature="…" --input feature_slug="…" --input contract_summary="…"` | Frontend: build the task DAG → fan out over independent slices (parallel) → merge → component + E2E tests → a11y gate → frontend review |
-| [`qa.yaml`](workflows/qa.yaml) | `conductor run qa.yaml --input feature="…" --input feature_slug="…"` | QA automation: author acceptance-criteria E2E tests, run in a clean env |
-| [`dispatch.yaml`](workflows/dispatch.yaml) | (internal — used by `main.yaml`'s `for_each`) | Routes a build to `backend_impl.yaml` or `frontend_impl.yaml` by stack |
-
-`design.yaml` and `main.yaml` contain a human approval gate, so run them with `--web`.
-
-> The test / merge / verify shell steps in the workflows are **POC stubs** (`echo` + exit 0).
-> Wire them to your real test runner and `kv up` / `kv down` before relying on the pipeline's
-> green/red result. Conductor also needs the `claude-agent-sdk` provider — the installer sets
-> this up when `uv` is present. The per-stack parallel fan-out (`for_each` over task-DAG
-> slices) is new — validate it against your Conductor runtime before relying on it.
+| Workflow | Command | Purpose |
+|----------|---------|---------|
+| [`design.yaml`](workflows/design.yaml) | `maestro <slug> --path=workflows/design.yaml` | HLD → LLDs → API contract |
+| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `maestro <slug> --path=workflows/backend_impl.yaml` | Backend implementation & tests |
+| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `maestro <slug> --path=workflows/frontend_impl.yaml` | Frontend implementation & tests |
+| [`qa.yaml`](workflows/qa.yaml) | `maestro <slug> --path=workflows/qa.yaml` | QA automation |
 
 ### Resuming a partially-run workflow
 
-Conductor only checkpoints the top-level run; a sub-workflow (`design.yaml`, `qa.yaml`, …)
-otherwise re-runs from its first step. To make sub-workflows re-entrant, each expensive step
-records itself in a per-feature ledger at `.sdlc/<slug>/state.json` (via
-[`workflows/state.py`](workflows/state.py)). On a re-run, a step whose artifact is already
-recorded and present on disk is skipped; the workflow lands on the first unfinished step.
-Human approval gates are never skipped — they always re-ask.
+Sub-workflows record completed steps in `.sdlc/<slug>/state.json`. Re-run the same command to
+resume from the first incomplete step. To force a rebuild:
 
-- Re-run the same command; completed steps skip automatically.
-- Force a rebuild of one step: `python3 workflows/state.py reset --slug <slug> --step hld`
-  (or just delete its artifact).
-- Force a full rebuild: `python3 workflows/state.py reset --slug <slug> --all`
-  (or delete `.sdlc/<slug>/state.json`).
+```bash
+python3 workflows/state.py reset --slug <slug> --step <step-id>   # rebuild one step
+python3 workflows/state.py reset --slug <slug> --all              # rebuild everything
+```
 
-**Known limits:** the ledger tracks completion, not content — hand-editing an upstream artifact
-does not auto-invalidate downstream steps (use `reset`). Skip granularity for the parallel LLD
-group is the whole group, not per-stack.
+Human approval gates always re-ask, even on resume.
 
 ### As skills (you orchestrate manually)
 
@@ -121,7 +93,7 @@ Run the slash commands yourself, in order, in any IDE (Claude Code, Cursor, Copi
 review each artifact before moving to the next:
 
 ```
-/plan feature="Add saved-search" feature_slug="saved-search"   # high-level design, then approve
+/plan feature="Add user authentication" feature_slug="user-authentication"   # high-level design, then approve
 /backend-design  ∥  /frontend-design   # author the per-stack LLDs
 /api-contract          # reconcile the LLDs → the cross-repo contract
 /architecture-review → /backend-impl → /backend-review
@@ -148,9 +120,11 @@ compatibility, migrations, accessibility, performance, …) and a **Safety** sec
 not write secrets or production config, and it stops to ask a human before anything
 destructive.
 
-This is the basic workflow — a starting point you can adjust to make your own.
-
 ## Customisable flow
+
+This is the basic workflow — a starting point you can customize to fit your process. Each step
+captures decision points, produces artifacts, and gates on their existence before advancing.
+Completed steps are recorded in `.sdlc/<slug>/state.json` so partial runs resume correctly.
 
 ```text
                           feature + PRD
@@ -204,53 +178,45 @@ This is the basic workflow — a starting point you can adjust to make your own.
                              release
 ```
 
-The whole design phase is one workflow ([workflows/design.yaml](workflows/design.yaml)): it
-authors the HLD, then runs an **open-question loop** — each open question is presented one at
-a time (Claude `AskUserQuestion`-style: suggested answers + Other, plus "You decide" and
-"Skip / defer"), the HLD is refined from the answers, and the loop repeats until no blocking
-questions remain. Questions live in a machine-readable
-`.sdlc/<slug>/open-questions.json` (validated against
-[`workflows/open-questions.schema.json`](workflows/open-questions.schema.json) by
-[`workflows/validate_open_questions.py`](workflows/validate_open_questions.py)); the HLD's
-"Open questions" section is its human mirror. Run standalone via `/plan`, the same loop is
-driven by Claude Code's native `AskUserQuestion`. After the loop it pauses for human approval,
-then `backend-design` and `frontend-design` each
-author one LLD for their stack (`docs/technical/<slug>/lld/`), and `/api-contract` reconciles
-them into the cross-repo contract (`contracts/<slug>/`). A human reviews the LLDs + contract
-at the next gate. The design skills also emit a machine-readable **task DAG**
-(`.sdlc/<slug>/<stack>/tasks.json`, validated against
-[`workflows/tasks.schema.json`](workflows/tasks.schema.json) by
-[`workflows/validate_tasks.py`](workflows/validate_tasks.py)) that the implementation phase
-fans out over — independent slices run in parallel, dependent tasks in order. Per-run proof
-lands under `.sdlc/`; exact paths are in `skills.config.yaml` under `artifacts:`.
-
 ## Configure
 
-[`skills.config.yaml`](skills.config.yaml) is the one file you edit. It selects, per step:
+### `skills.config.yaml` — Workflow configuration
 
-- which skill runs it;
-- which **helper skill** (if any) it delegates part of the work to — a bare skill name, or
-  `none` to keep everything in-pack;
-- the reviewer per stack and the artifact paths.
+This file defines which skill backs each SDLC step. Edit once, change everywhere:
 
-The default flow needs exactly one external pack (Superpowers, installed by the script). Every
-other helper slot ships as `none`. **Review any third-party skill before wiring it in** — treat
-marketplace skills as untrusted code.
+| Setting | Purpose |
+|---------|---------|
+| `skill:` | Which skill runs this step |
+| `external:` | Optional helper skill (`none` to use built-in) |
+| `reviewer:` | Who reviews the output (backend/frontend stack) |
+| `artifacts:` | Where artifacts are saved (`<slug>` is feature slug) |
 
-Conductor-only knobs (fix-loop cap, coverage gate, environment lifecycle, the **default model**,
-and the **web port**) live in [`workflows/workflow.config.yaml`](workflows/workflow.config.yaml).
+**Review third-party skills before use.** The default flow requires [Superpowers](https://github.com/obra/superpowers) (installed by the script); all other slots default to `none` (built-in).
 
-**Model — one default, everywhere.** Every step runs on a single model, set once in
-`workflow.config.yaml` under `models.default` (ships as `claude-haiku-4-5`). Change it there and
-`maestro` applies it to the whole pipeline; or set `KV_MODEL_DEFAULT` in your environment for a
-one-off:
+### `workflows/maestro.config.yaml` — Orchestration settings
 
-```bash
-KV_MODEL_DEFAULT=claude-sonnet-5 maestro saved-search   # bump every step for this run
+Set Conductor-specific knobs (fix-loop cap, coverage gate, environment lifecycle):
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `models.default` | `claude-haiku-4-5` | Fallback model for any agent |
+| `models.agents.<name>` | `claude-haiku-4-5` | Per-agent model override |
+| `web.port` | `8080` | Dashboard port |
+| `fix_loop.max_attempts` | `3` | Fix-loop cap before escalating |
+| `gates.coverage_threshold` | `80` | Minimum test coverage |
+
+### Model selection
+
+**Per-agent, one place.** Each agent's model is set under `models.agents` in
+`maestro.config.yaml`, keyed by agent name:
+
+```yaml
+models:
+  default: claude-haiku-4-5   # fallback for any agent not listed
+  agents:
+    author_hld:  claude-sonnet-5   # bump just the HLD author
+    arch_review: claude-sonnet-5   # and the architecture review
+    # everything else -> claude-haiku-4-5
 ```
 
-Need a stronger model for a **single step**? Add `model: <id>` to that step in its workflow YAML
-— a literal there wins over the global default.
-
-The **web dashboard port** defaults to `8080` (Conductor otherwise picks a random port). The
-`maestro` wrapper sets it; override with `KV_WEB_PORT`.
+Any agent you don't list runs on `claude-haiku-4-5`.

@@ -25,7 +25,7 @@ workflow:
 
   runtime:
     provider: claude-agent-sdk
-    default_model: ${KV_MODEL_DEFAULT:-claude-haiku-4-5}   # global default; see workflows/workflow.config.yaml `models:`
+    default_model: claude-haiku-4-5   # backstop for any agent without an explicit model:
 
   limits:
     max_iterations: 18
@@ -46,6 +46,13 @@ workflow:
       type: string
       required: false
       default: ""
+    model:
+      type: object
+      required: false
+      default: {}
+      description: >
+        Per-agent model overrides, keyed by agent name. Any agent not listed
+        falls back to claude-haiku-4-5.
 
 # ----------------------------------------------------------------------------
 # Fan-out: author each critical-journey spec in parallel (scenarios are independent).
@@ -64,6 +71,7 @@ for_each:
     failure_mode: all_or_nothing
     agent:
       name: author_scenario
+      model: "{{ workflow.input.model.author_scenario if workflow.input.model.author_scenario is defined else 'claude-haiku-4-5' }}"
       prompt: |
         Run the **/qa** skill in SCENARIO mode — author ONLY this scenario's spec. Inputs:
         - feature:      {{ workflow.input.feature }}
@@ -80,6 +88,7 @@ for_each:
 agents:
   - name: author_tests
     description: Author critical-journey E2E from acceptance criteria via the qa-automation skill.
+    model: "{{ workflow.input.model.author_tests if workflow.input.model.author_tests is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/qa** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
@@ -123,6 +132,7 @@ agents:
   # re-runs the suite and reports resolved.
   - name: qa_fix
     description: Bounded QA fix + re-run via the fix-loop skill (cap enforced in the skill).
+    model: "{{ workflow.input.model.qa_fix if workflow.input.model.qa_fix is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/fix** skill on the failed E2E suite (the /qa + /fix skills own the
       freeze-assertions rule). Then re-run the suite and return `resolved: true` only if it

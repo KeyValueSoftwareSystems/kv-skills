@@ -38,7 +38,7 @@ workflow:
 
   runtime:
     provider: claude-agent-sdk
-    default_model: ${KV_MODEL_DEFAULT:-claude-haiku-4-5}   # global default; see workflows/workflow.config.yaml `models:`
+    default_model: claude-haiku-4-5   # backstop for any agent without an explicit model:
 
   metadata:
     tracker: sdlc-poc
@@ -80,6 +80,15 @@ workflow:
       description: >
         Stacks to fan out over. POC default builds backend + frontend. Later,
         derive from design.output.affected_repos.
+    model:
+      type: object
+      required: false
+      default: {}
+      description: >
+        Per-agent model overrides, keyed by agent name. Passed by the `maestro`
+        wrapper from maestro.config.yaml `models.agents` and threaded to every
+        sub-workflow. Any agent not listed falls back to claude-haiku-4-5, so a
+        plain `conductor run` (no model input) uses defaults everywhere.
 
 # ----------------------------------------------------------------------------
 # Fan-out: one dispatch.yaml run per stack, concurrently (all_or_nothing).
@@ -104,6 +113,7 @@ for_each:
         contract_summary: "{{ design.output.contract_summary }}"
         contract_path: "{{ design.output.contract_path }}"
         lld_path: "{{ design.output.backend_lld_path if stack.name == 'backend' else design.output.frontend_lld_path }}"
+        model: "{{ workflow.input.model | json }}"
       # Per-stack outputs come from dispatch.yaml's own `output:` block, surfaced
       # as implement.outputs[<stack>].* (a `type: workflow` agent must not redeclare output).
     routes:
@@ -139,6 +149,7 @@ agents:
       feature: "{{ workflow.input.feature or derive_slug.output }}"
       feature_slug: "{{ derive_slug.output }}"
       prd_path: "{{ workflow.input.prd_path }}"
+      model: "{{ workflow.input.model | json }}"
     # Outputs come from design.yaml's own `output:` block (design.output.*).
     routes:
       - to: assert_lld
@@ -172,6 +183,7 @@ agents:
   # contract approval gate (human decides; blocking findings route to revise).
   - name: arch_review
     description: Architecture review of the LLD/contract via the architecture-review skill.
+    model: "{{ workflow.input.model.arch_review if workflow.input.model.arch_review is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/architecture-review** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
@@ -320,6 +332,7 @@ agents:
       feature_slug: "{{ derive_slug.output }}"
       acceptance_criteria: "{{ design.output.acceptance_criteria }}"
       contract_summary: "{{ design.output.contract_summary }}"
+      model: "{{ workflow.input.model | json }}"
     # Outputs come from qa.yaml's own `output:` block (qa.output.*).
     routes:
       - to: review_pack
@@ -327,6 +340,7 @@ agents:
   # ---- 7. HUMAN REVIEW PACK (/review-pack) --------------------------------
   - name: review_pack
     description: Assemble the PR/release review pack via the human-review-pack skill.
+    model: "{{ workflow.input.model.review_pack if workflow.input.model.review_pack is defined else 'claude-haiku-4-5' }}"
     prompt: |
       Run the **/review-pack** skill. Inputs:
       - feature:      {{ workflow.input.feature }}

@@ -12,9 +12,11 @@
 # (must come right after the slug). Anything after `--` is forwarded verbatim to
 # `conductor run`.
 #
-# Deterministic dashboard: http://127.0.0.1:${KV_WEB_PORT:-8080} every run.
-# Model: one global default, set in workflows/workflow.config.yaml `models.default`
-#   (this wrapper exports it as KV_MODEL_DEFAULT); set `model:` on a step to override.
+# Deterministic dashboard: reads workflows/maestro.config.yaml `web.port`
+#   (default 8080) and passes it as Conductor's --web-port CLI flag.
+# Models: per-agent, set in workflows/maestro.config.yaml `models.agents`. This
+#   wrapper passes them as --input model='{"<agent>":"<id>", …}'. Agents not listed
+#   (and a plain `conductor run` without this wrapper) fall back to claude-haiku-4-5.
 # =============================================================================
 set -uo pipefail
 
@@ -34,23 +36,52 @@ if [ ! -f "$wf" ]; then
   exit 1
 fi
 
-# Global default model: workflow.config.yaml `models.default` is the single knob.
-# Export it as KV_MODEL_DEFAULT, which every workflow's default_model reads via
-# ${KV_MODEL_DEFAULT:-…}. An explicit env var already set by the user wins.
-if [ -z "${KV_MODEL_DEFAULT:-}" ]; then
-  cfg="$(dirname "$wf")/workflow.config.yaml"; [ -f "$cfg" ] || cfg="workflows/workflow.config.yaml"
-  if [ -f "$cfg" ]; then
-    m=$(sed -n 's/^[[:space:]]*default:[[:space:]]*\([A-Za-z0-9._-]*\).*/\1/p' "$cfg" | head -1)
-    [ -n "$m" ] && export KV_MODEL_DEFAULT="$m"
-  fi
+# Per-agent models: build a JSON object from maestro.config.yaml `models.agents`
+# and pass it as --input model='{"<agent>":"<id>", …}'. Each agent's model: line
+# falls back to claude-haiku-4-5 for any key we don't send, so an empty/absent map
+# is harmless. awk scopes to the `agents:` block under `models:` (4-space children).
+cfg="$(dirname "$wf")/maestro.config.yaml"; [ -f "$cfg" ] || cfg="workflows/maestro.config.yaml"
+model_json="{}"
+if [ -f "$cfg" ]; then
+  # Portable awk (no {n} interval regexes — BSD awk lacks them). `indent` = leading
+  # spaces; an `agents:` child is any deeper-indented `key: value` under `models:`.
+  model_json=$(awk '
+    { indent = match($0, /[^ ]/) - 1 }                        # leading-space count (0 for blank)
+    /^models:/                    { in_models=1; next }
+    in_models && indent==0 && /[^ ]/ { in_models=0; in_agents=0 }  # dedent out of models:
+    in_models && $1=="agents:"    { in_agents=1; agent_indent=indent; next }
+    in_agents {
+      if (!/[^ ]/ || $1 ~ /^#/) next                          # blank / comment
+      if (indent <= agent_indent) { in_agents=0 }             # dedent out of agents:
+      else {
+        line=$0; sub(/^ +/, "", line)
+        key=line; sub(/:.*/, "", key)
+        val=line; sub(/^[^:]*:[ ]*/, "", val); sub(/[ ]*#.*/, "", val); sub(/ +$/, "", val)
+        if (key != "" && val != "")
+          items = items (items ? "," : "") "\"" key "\":\"" val "\""
+        next
+      }
+    }
+    END { printf "{%s}", items }
+  ' "$cfg")
+fi
+
+# Dashboard port: maestro.config.yaml `web.port`, else 8080. The web UI binds this
+# via Conductor's --web-port CLI flag (it is NOT a workflow input — the schema has
+# no such key and Conductor reads it before any workflow runs).
+web_port=8080
+if [ -f "$cfg" ]; then
+  p=$(awk '/^web:/{w=1;next} w&&/^[^[:space:]]/{w=0} w&&$1=="port:"{print $2; exit}' "$cfg")
+  [ -n "$p" ] && web_port="$p"
 fi
 
 prd="features/${slug}/prd.md"
 [ -s "$prd" ] || echo "maestro: WARN — $prd is missing or empty. Create it, or pass --input prd_path=... after --." >&2
 
 exec conductor run "$wf" \
-  --web --web-port "${KV_WEB_PORT:-8080}" \
+  --web --web-port "$web_port" \
   --input feature_slug="$slug" \
   --input feature="$slug" \
   --input prd_path="$prd" \
+  --input model="$model_json" \
   "$@"
