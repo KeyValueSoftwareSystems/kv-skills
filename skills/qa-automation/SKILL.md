@@ -16,13 +16,18 @@ not every path.
   make a test pass.
 
 ## Inputs
-`feature`, `acceptance_criteria`, optional `contract_summary` (for cross-service journeys).
+`feature`, `acceptance_criteria`, optional `contract_summary` (for cross-service journeys), and
+optional `test_cases_path` — the design-phase functional test-case catalog
+(`.maestro/<slug>/test-cases.md`, from `/functional-testcases`).
 
 ## Steps
 1. **Pick the framework** from `skills.config.yaml` → `qa.framework` (`playwright` web /
    `maestro` mobile).
-2. **Derive journeys** from the acceptance criteria; rank by risk; pick the critical ones
-   and the highest-value negative paths. State what is out of scope.
+2. **Source the journeys.** If `test_cases_path` exists, that catalog is the source of truth —
+   automate its cases, preserving each case's ID/traceability, and do not silently drop a case
+   (note any you defer and why). Only when no catalog is present do you derive journeys straight
+   from the acceptance criteria. Either way: rank by risk; pick the critical ones and the
+   highest-value negative paths; state what is out of scope.
 3. **Design test data** — each test seeds and tears down its own data; no shared mutable state.
 4. **Author tests** with stable selectors (roles/test-ids), explicit waits on conditions,
    and assertions that verify observable behavior + the contract's outcomes.

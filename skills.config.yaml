@@ -41,6 +41,14 @@ lld:
 contract:
   skill: api-contract                           # reconciles the LLDs -> .maestro/<slug>/openapi.yaml
 
+# ---- 2b. Functional test cases (design-time; the QA source of truth) --------
+# Authored at the END of the design phase (after the contract) from the
+# acceptance criteria + HLD + contract: a human-readable, black-box test-case
+# catalog. The QA phase (section 5) turns this catalog into the automated E2E
+# suite — so `qa-automation` reads .maestro/<slug>/test-cases.md as its source.
+test_cases:
+  skill: functional-testcases                   # -> .maestro/<slug>/test-cases.md
+
 # ---- 3. Backend implementation ----------------------------------------------
 backend:
   tasks: backend-tasks
@@ -99,5 +107,6 @@ artifacts:
   lld:         .maestro/<slug>/lld/                    # backend.md, frontend.md (one per stack)
   contract:    .maestro/<slug>/openapi.yaml
   acceptance:  .maestro/<slug>/acceptance-criteria.md
+  test_cases:  .maestro/<slug>/test-cases.md         # functional test-case catalog (design-time; QA's source)
   work_dir:    .maestro/<slug>/                        # tasks, verify, reviews, review-pack
   tasks:       .maestro/<slug>/<stack>/tasks.json      # machine-readable task DAG (<stack> = backend|frontend|qa)

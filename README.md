@@ -95,7 +95,7 @@ Run individual workflows for specific phases:
 
 | Workflow | Command | Purpose |
 |----------|---------|---------|
-| [`design.yaml`](workflows/design.yaml) | `maestro <slug> --path=workflows/design.yaml` | HLD → LLDs → API contract |
+| [`design.yaml`](workflows/design.yaml) | `maestro <slug> --path=workflows/design.yaml` | HLD → LLDs → API contract → functional test cases |
 | [`backend_impl.yaml`](workflows/backend_impl.yaml) | `maestro <slug> --path=workflows/backend_impl.yaml` | Backend implementation & tests |
 | [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `maestro <slug> --path=workflows/frontend_impl.yaml` | Frontend implementation & tests |
 | [`qa.yaml`](workflows/qa.yaml) | `maestro <slug> --path=workflows/qa.yaml` | QA automation |
@@ -121,6 +121,7 @@ review each artifact before moving to the next:
 /plan feature="Add user authentication" feature_slug="user-authentication"   # high-level design, then approve
 /backend-design  ∥  /frontend-design   # author the per-stack LLDs
 /api-contract          # reconcile the LLDs → the cross-repo contract
+/functional-testcases  # derive the functional test-case catalog QA will automate
 /architecture-review → /backend-impl → /backend-review
 /frontend-impl → /frontend-review → /qa → /verify → /fix → /review-pack
 ```
@@ -130,6 +131,7 @@ review each artifact before moving to the next:
 | `plan` | `/plan` | no | High-level design (HLD): options, choice, risks |
 | `backend-design` / `frontend-design` | `/backend-design` · `/frontend-design` | no | Author the per-stack low-level design (LLD) — how the feature fits each stack |
 | `api-contract` | `/api-contract` | no | Reconcile the LLDs into the OpenAPI contract + acceptance criteria |
+| `functional-testcases` | `/functional-testcases` | no | Derive the functional test-case catalog (black-box, traceable) — the source `/qa` automates |
 | `backend-tasks` | `/backend-tasks` | no | Author the task DAG (`tasks.json`) — ordered tasks grouped into independent slices (fallback when the design phase didn't emit it) |
 | `backend-implement` | `/backend-impl` | yes | Implement to the contract, test-first, to backend standards |
 | `frontend-implement` | `/frontend-impl` | yes | Implement UI states + tests to frontend standards |
@@ -171,6 +173,9 @@ folder, `.maestro/<slug>/`.
                  └──────────────┬──────────────┘
                                 ▼
                           /api-contract
+                                │
+                                ▼
+                       functional-testcases      (test-case catalog → QA)
                                 │
                                 ▼
                           — ✋ approve —

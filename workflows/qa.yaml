@@ -53,6 +53,16 @@ workflow:
       type: string
       required: false
       default: ""
+    test_cases_path:
+      type: string
+      required: false
+      default: ""
+      description: >
+        Path to the design-phase functional test-case catalog
+        (.maestro/<slug>/test-cases.md). When present, the /qa skill automates
+        THESE cases rather than re-deriving journeys from scratch. If empty
+        (e.g. running qa.yaml standalone), the skill falls back to the
+        acceptance criteria.
     model:
       type: object
       required: false
@@ -100,6 +110,7 @@ agents:
       Run the **/qa** skill. Inputs:
       - feature:      {{ workflow.input.feature }}
       - feature_slug: {{ workflow.input.feature_slug }}
+      {% if workflow.input.test_cases_path %}- test_cases_path: {{ workflow.input.test_cases_path }}  (design-phase functional test-case catalog — automate THESE cases; the acceptance criteria are the fallback){% endif %}
       {% if workflow.input.acceptance_criteria %}- acceptance_criteria: {{ workflow.input.acceptance_criteria }}{% endif %}
       {% if workflow.input.contract_summary %}- contract_summary: {{ workflow.input.contract_summary }}{% endif %}
       {% if run_e2e is defined %}

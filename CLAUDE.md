@@ -55,6 +55,7 @@ accepts one is a regression.
 
 ```
 feature + requirement → HLD (/plan) → [open-questions loop → approve] → per-stack LLDs (backend ∥ frontend) → /api-contract
+        → /functional-testcases (functional test-case catalog → the QA source of truth)
         → architecture-review → [approve]
         → implement (task DAG → parallel slices → merge → tests → verify → review)
         → QA → review pack → [approve → release] → archive (stub)

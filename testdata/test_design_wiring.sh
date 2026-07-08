@@ -16,8 +16,8 @@ echo "# HLD" > ".maestro/$SLUG/hld.md"
 $STATE mark --slug "$SLUG" --step hld --artifact ".maestro/$SLUG/hld.md" || fail "mark hld"
 $STATE check --slug "$SLUG" --step hld || fail "hld should be done after mark"
 
-# Cascade reset (revise route) clears hld + downstream
-$STATE reset --slug "$SLUG" --step hld --step backend_lld --step frontend_lld --step api_contract || fail "reset"
+# Cascade reset (revise route) clears hld + downstream (incl. the test-case catalog)
+$STATE reset --slug "$SLUG" --step hld --step backend_lld --step frontend_lld --step api_contract --step test_cases || fail "reset"
 $STATE check --slug "$SLUG" --step hld && fail "hld should be cleared after reset"
 
 # Cleanup

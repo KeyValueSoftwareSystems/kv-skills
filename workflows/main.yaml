@@ -7,7 +7,8 @@
 #     -> DESIGN phase (design.yaml, one sub-workflow):
 #          /plan -> assert -> HUMAN approve
 #            -> backend-design ∥ frontend-design (per-stack LLDs)
-#              -> /api-contract          ==> hld.md + lld/{backend,frontend}.md + openapi.yaml
+#              -> /api-contract -> /functional-testcases
+#                 ==> hld.md + lld/{backend,frontend}.md + openapi.yaml + test-cases.md
 #        -> assert artifacts -> architecture-review -> HUMAN approve (contract)
 #              -> implement (for_each affected stack, parallel)
 #                   task-split -> execute -> verify -> role review (backend|frontend)
@@ -260,9 +261,11 @@ agents:
       - Backend LLD: `.maestro/{{ derive_slug.output }}/lld/backend.md`
       - Frontend LLD: `.maestro/{{ derive_slug.output }}/lld/frontend.md`
       - Contract: `.maestro/{{ derive_slug.output }}/openapi.yaml`
+      - Functional test cases: `.maestro/{{ derive_slug.output }}/test-cases.md`
 
       **Affected stacks:** {{ design.output.affected_repos | json }}
       **Contract summary:** {{ design.output.contract_summary }}
+      **Test-case coverage:** {{ design.output.test_cases_summary }}
 
       Approve to fan out implementation, request revisions, or reject.
     options:
@@ -333,6 +336,7 @@ agents:
       feature_slug: "{{ derive_slug.output }}"
       acceptance_criteria: "{{ design.output.acceptance_criteria }}"
       contract_summary: "{{ design.output.contract_summary }}"
+      test_cases_path: "{{ design.output.test_cases_path }}"
       model: "{{ workflow.input.model | json }}"
     # Outputs come from qa.yaml's own `output:` block (qa.output.*).
     routes:
@@ -421,6 +425,7 @@ agents:
         #   .maestro/$s/hld.md, lld/*.md       -> docs/technical/$s/
         #   .maestro/$s/openapi.yaml           -> docs/technical/$s/
         #   .maestro/$s/acceptance-criteria.md -> docs/functional/$s/
+        #   .maestro/$s/test-cases.md          -> docs/functional/$s/
         echo "[archive] TODO: publish .maestro/$s/ -> docs/technical|functional/$s/ (stub, not implemented)"
         exit 0
     routes:

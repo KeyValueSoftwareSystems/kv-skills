@@ -6,14 +6,16 @@
 # Composed by main.yaml as the design step.
 #
 # Flow (each phase guarded by the .maestro/<slug>/state.json ledger for resume):
-#   assert_requirement -> g_hld -> author_hld (/plan) -> m_hld
+#   assert_requirement -> guard_hld -> author_hld (/plan) -> mark_hld
 #     -> open-question loop:  serve -> ask_question -> record_answer -> serve
 #                             serve -> refine_hld -> serve   (until resolved)
 #     -> HUMAN approve   (revise -> reset_hld_cascade -> re-author -> loop again)
-#     -> g_llds -> backend_design ∥ frontend_design -> m_llds
-#        -> g_contract -> contract (/api-contract: reconcile the LLDs into the
-#           cross-repo OpenAPI contract + acceptance criteria) -> m_contract
-# On resume, g_hld routes a done HLD into `serve`, so any still-open questions are
+#     -> guard_llds -> backend_design ∥ frontend_design -> mark_llds
+#        -> guard_contract -> contract (/api-contract: reconcile the LLDs into the
+#           cross-repo OpenAPI contract + acceptance criteria) -> mark_contract
+#        -> guard_test_cases -> test_cases (/functional-testcases: derive the
+#           functional test-case catalog QA later automates) -> mark_test_cases
+# On resume, guard_hld routes a done HLD into `serve`, so any still-open questions are
 # re-asked before the (never-skipped) approval gate.
 #
 # NOTE: this workflow contains a human_gate (HLD approval). Run it with `--web`.
@@ -26,6 +28,7 @@
 #   .maestro/<slug>/lld/frontend.md
 #   .maestro/<slug>/openapi.yaml
 #   .maestro/<slug>/acceptance-criteria.md
+#   .maestro/<slug>/test-cases.md
 # =============================================================================
 
 workflow:
@@ -81,7 +84,7 @@ parallel:
     failure_mode: all_or_nothing
     agents: [backend_design, frontend_design]
     routes:
-      - to: m_llds
+      - to: mark_llds
 
 agents:
   # ---- 0. RESOLVE the requirement folder ---------------------------------
@@ -112,12 +115,12 @@ agents:
           echo "[requirement] NOT FOUND (or empty): $d — run \`maestro init <slug>\` and add requirement files before designing." >&2; exit 1
         fi
     routes:
-      - to: g_hld
+      - to: guard_hld
         when: "exit_code == 0"
       - to: abort
 
   # ---- GUARD: skip HLD authoring if already done (gate still runs) --------
-  - name: g_hld
+  - name: guard_hld
     type: script
     description: Skip /plan if hld.md is already marked done and present.
     command: bash
@@ -148,10 +151,10 @@ agents:
       hld_path: { type: string }
       hld_summary: { type: string }
     routes:
-      - to: m_hld
+      - to: mark_hld
 
   # ---- MARK: record hld done (subsumes the old assert_hld) ----------------
-  - name: m_hld
+  - name: mark_hld
     type: script
     description: Assert + record hld.md done in the ledger.
     command: bash
@@ -283,7 +286,7 @@ agents:
     options:
       - label: "Approve — proceed to LLD"
         value: approve
-        route: g_llds
+        route: guard_llds
       - label: "Request broader HLD revisions"
         value: revise
         route: reset_hld_cascade
@@ -295,20 +298,20 @@ agents:
   # ---- RESET: revise HLD invalidates HLD + everything downstream ----------
   - name: reset_hld_cascade
     type: script
-    description: Clear hld + derived LLD/contract flags so a revision regenerates them.
+    description: Clear hld + derived LLD/contract/test-case flags so a revision regenerates them.
     command: bash
     args:
       - "-c"
       - |
         python3 workflows/state.py reset --slug "{{ workflow.input.feature_slug }}" \
-          --step hld --step backend_lld --step frontend_lld --step api_contract
+          --step hld --step backend_lld --step frontend_lld --step api_contract --step test_cases
     routes:
       - to: author_hld
         when: "exit_code == 0"
       - to: abort
 
   # ---- GUARD: skip LLD authoring only if BOTH LLDs are done ---------------
-  - name: g_llds
+  - name: guard_llds
     type: script
     description: Skip the parallel LLD group only when both LLDs are already done.
     command: bash
@@ -318,7 +321,7 @@ agents:
         python3 workflows/state.py check --slug "{{ workflow.input.feature_slug }}" --step backend_lld \
           && python3 workflows/state.py check --slug "{{ workflow.input.feature_slug }}" --step frontend_lld
     routes:
-      - to: g_contract              # both done -> skip group
+      - to: guard_contract              # both done -> skip group
         when: "exit_code == 0"
       - to: author_llds             # either missing -> run group
 
@@ -354,7 +357,7 @@ agents:
   # ---- MARK: record both LLDs done (subsumes main.yaml's assert_lld) -------
   # NOTE: backend_lld may be marked done before the chained frontend mark fails
   # (-> abort); the next resume re-runs the whole group (group-level granularity).
-  - name: m_llds
+  - name: mark_llds
     type: script
     description: Assert + record both per-stack LLDs done.
     command: bash
@@ -366,12 +369,12 @@ agents:
         && python3 workflows/state.py mark --slug "{{ workflow.input.feature_slug }}" \
           --step frontend_lld --artifact ".maestro/{{ workflow.input.feature_slug }}/lld/frontend.md"
     routes:
-      - to: g_contract
+      - to: guard_contract
         when: "exit_code == 0"
       - to: abort
 
   # ---- GUARD: skip contract if already done -------------------------------
-  - name: g_contract
+  - name: guard_contract
     type: script
     description: Skip /api-contract if the OpenAPI contract is already done.
     command: bash
@@ -380,7 +383,7 @@ agents:
       - |
         python3 workflows/state.py check --slug "{{ workflow.input.feature_slug }}" --step api_contract
     routes:
-      - to: $end                    # done -> whole design phase complete
+      - to: guard_test_cases            # done -> skip authoring, resume at the test-case phase
         when: "exit_code == 0"
       - to: contract
 
@@ -408,10 +411,10 @@ agents:
       acceptance_criteria:
         type: string
     routes:
-      - to: m_contract
+      - to: mark_contract
 
   # ---- MARK: record contract done -----------------------------------------
-  - name: m_contract
+  - name: mark_contract
     type: script
     description: Assert + record the OpenAPI contract done.
     command: bash
@@ -420,6 +423,59 @@ agents:
       - |
         python3 workflows/state.py mark --slug "{{ workflow.input.feature_slug }}" \
           --step api_contract --artifact ".maestro/{{ workflow.input.feature_slug }}/openapi.yaml"
+    routes:
+      - to: guard_test_cases
+        when: "exit_code == 0"
+      - to: abort
+
+  # ---- GUARD: skip functional test cases if already done ------------------
+  - name: guard_test_cases
+    type: script
+    description: Skip /functional-testcases if the test-case catalog is already done.
+    command: bash
+    args:
+      - "-c"
+      - |
+        python3 workflows/state.py check --slug "{{ workflow.input.feature_slug }}" --step test_cases
+    routes:
+      - to: $end                    # done -> whole design phase complete
+        when: "exit_code == 0"
+      - to: test_cases
+
+  # ---- 5. FUNCTIONAL TEST CASES (/functional-testcases) -------------------
+  # Derive the human-readable, black-box test-case catalog from the acceptance
+  # criteria + HLD + contract. This is the SOURCE the QA phase (/qa) automates
+  # into the E2E suite — QA reads .maestro/<slug>/test-cases.md.
+  - name: test_cases
+    description: Author the functional test-case catalog via the functional-testcases skill.
+    model: "{{ workflow.input.model.test_cases if workflow.input.model.test_cases is defined else 'claude-haiku-4-5' }}"
+    prompt: |
+      Run the **/functional-testcases** skill (the contract + acceptance criteria are already
+      written — derive cases from them, not from any implementation). Inputs:
+      - feature:         {{ workflow.input.feature }}
+      - feature_slug:    {{ workflow.input.feature_slug }}
+      - hld_path:        .maestro/{{ workflow.input.feature_slug }}/hld.md
+      - contract_path:   .maestro/{{ workflow.input.feature_slug }}/openapi.yaml
+      - acceptance_path: .maestro/{{ workflow.input.feature_slug }}/acceptance-criteria.md
+      {% if contract is defined %}- acceptance_criteria: {{ contract.output.acceptance_criteria }}{% endif %}
+      Return: test_cases_path, case_count, coverage_summary.
+    output:
+      test_cases_path: { type: string }
+      case_count: { type: number }
+      coverage_summary: { type: string }
+    routes:
+      - to: mark_test_cases
+
+  # ---- MARK: record the functional test-case catalog done -----------------
+  - name: mark_test_cases
+    type: script
+    description: Assert + record the functional test-case catalog done.
+    command: bash
+    args:
+      - "-c"
+      - |
+        python3 workflows/state.py mark --slug "{{ workflow.input.feature_slug }}" \
+          --step test_cases --artifact ".maestro/{{ workflow.input.feature_slug }}/test-cases.md"
     routes:
       - to: $end
         when: "exit_code == 0"
@@ -447,3 +503,5 @@ output:
   contract_summary:    "{% if contract is defined %}{{ contract.output.contract_summary }}{% endif %}"
   affected_repos:      "{% if contract is defined %}{{ contract.output.affected_repos | json }}{% endif %}"
   acceptance_criteria: "{% if contract is defined %}{{ contract.output.acceptance_criteria }}{% endif %}"
+  test_cases_path: ".maestro/{{ workflow.input.feature_slug }}/test-cases.md"
+  test_cases_summary:  "{% if test_cases is defined %}{{ test_cases.output.coverage_summary }}{% endif %}"

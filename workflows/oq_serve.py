@@ -30,7 +30,7 @@ def main() -> None:
     path = Path(sys.argv[1])
     # Fail-soft (matches the ledger's corrupt-file handling): a missing or
     # unparseable file means "no open questions" -> approve. This keeps resume
-    # working when g_hld routes a done HLD into serve, and stays safe for HLDs
+    # working when guard_hld routes a done HLD into serve, and stays safe for HLDs
     # authored before open-questions.json existed.
     if not path.is_file():
         print(f"[oq] no open-questions file at {path}; treating as resolved", file=sys.stderr)
