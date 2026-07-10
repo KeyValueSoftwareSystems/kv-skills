@@ -1,114 +1,106 @@
 #!/usr/bin/env bash
 # =============================================================================
-# maestro — run the KeyValue AI-SDLC pipeline by feature slug
+# maestro — helper CLI for Maestro v2 (lead-agent orchestration)
 # =============================================================================
-# Scaffold the requirement folder, drop your requirement files in it, then run:
+# There is NO headless runner any more: workflows are driven by YOUR interactive
+# session (Claude Code, Cursor, …) via the /maestro skill — zero API keys.
+# This wrapper covers everything around that:
 #
-#   maestro init <slug>                         # create .maestro/<slug>/requirement/
-#   maestro <slug>                              # default pipeline (workflows/main.yaml)
-#   maestro <slug> --path=workflows/design.yaml # run any individual/custom workflow
-#   maestro <slug> --path=wf/custom.yaml -- --dry-run   # extra flags pass to conductor
+#   maestro init <slug>              scaffold .maestro/<slug>/requirement/
+#   maestro validate [workflow]      lint a workflow file (default workflows/sdlc-main.yaml)
+#   maestro status <slug>            show the run's step table / gates / cursors
+#   maestro reset <slug> [...]       forward to maestroctl reset (e.g. --step X --cascade)
+#   maestro ui                       open the visual workflow builder
+#   maestro <slug> [workflow]        preflight a run, then tell you the /maestro command
 #
-# The requirement lives in .maestro/<slug>/requirement/ — a folder of one or more
-# files; /plan reads them all. The default workflow is workflows/main.yaml; override
-# it with --path=<file> (must come right after the slug). Anything after `--` is
-# forwarded verbatim to `conductor run`.
-#
-# Deterministic dashboard: reads workflows/maestro.config.yaml `web.port`
-#   (default 8080) and passes it as Conductor's --web-port CLI flag.
-# Models: per-agent, set in workflows/maestro.config.yaml `models.agents`. This
-#   wrapper passes them as --input model='{"<agent>":"<id>", …}'. Agents not listed
-#   (and a plain `conductor run` without this wrapper) fall back to claude-haiku-4-5.
+# Requires python3 on PATH. Run from your repo root (where engine/ + workflows/ live).
 # =============================================================================
 set -uo pipefail
 
-# Subcommand: `maestro init <slug>` scaffolds the requirement folder and exits.
-if [ "${1:-}" = "init" ]; then
-  shift
-  slug="${1:?usage: maestro init <slug>}"; shift
-  req_dir=".maestro/${slug}/requirement"
-  mkdir -p "$req_dir"
-  if [ ! -e "$req_dir/requirement.md" ]; then
-    printf '# %s\n\n<!-- Describe the feature. Add any number of files in this folder; /plan reads them all. -->\n' "$slug" > "$req_dir/requirement.md"
-  fi
-  echo "==> Initialized $req_dir — edit the files there, then run: maestro $slug"
-  exit 0
-fi
+usage() { sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-slug="${1:?usage: maestro <slug> [--path=<workflow.yaml>] [-- conductor-args]  |  maestro init <slug>}"; shift
+die() { echo "maestro: $*" >&2; exit 1; }
 
-# Default workflow; override with --path (as the first arg after the slug).
-wf="workflows/main.yaml"
-case "${1:-}" in
-  --path=*) wf="${1#--path=}"; shift ;;
-  --path)   wf="${2:?maestro: --path needs a value}"; shift 2 ;;
+repo_root() {
+  # engine/maestroctl.py marks the root; walk up from cwd
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    [ -f "$d/engine/maestroctl.py" ] && { echo "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  die "engine/maestroctl.py not found — run from a repo where the Maestro pack is installed"
+}
+
+[ $# -ge 1 ] || usage 2
+cmd="$1"; shift || true
+case "$cmd" in
+  -h|--help|help) usage 0 ;;
 esac
-[ "${1:-}" = "--" ] && shift   # optional separator before conductor pass-through flags
 
-if [ ! -f "$wf" ]; then
-  echo "maestro: workflow not found: $wf" >&2
-  echo "         run from your repo root, or pass --path=<valid workflow file>." >&2
-  exit 1
-fi
+ROOT="$(repo_root)"
+CTL=(python3 "$ROOT/engine/maestroctl.py" --root "$ROOT")
 
-# Per-agent models: build a JSON object from maestro.config.yaml `models.agents`
-# and pass it as --input model='{"<agent>":"<id>", …}'. Each agent's model: line
-# falls back to claude-haiku-4-5 for any key we don't send, so an empty/absent map
-# is harmless. awk scopes to the `agents:` block under `models:` (4-space children).
-cfg="$(dirname "$wf")/maestro.config.yaml"; [ -f "$cfg" ] || cfg="workflows/maestro.config.yaml"
-model_json="{}"
-if [ -f "$cfg" ]; then
-  # Portable awk (no {n} interval regexes — BSD awk lacks them). `indent` = leading
-  # spaces; an `agents:` child is any deeper-indented `key: value` under `models:`.
-  model_json=$(awk '
-    { indent = match($0, /[^ ]/) - 1 }                        # leading-space count (0 for blank)
-    /^models:/                    { in_models=1; next }
-    in_models && indent==0 && /[^ ]/ { in_models=0; in_agents=0 }  # dedent out of models:
-    in_models && $1=="agents:"    { in_agents=1; agent_indent=indent; next }
-    in_agents {
-      if (!/[^ ]/ || $1 ~ /^#/) next                          # blank / comment
-      if (indent <= agent_indent) { in_agents=0 }             # dedent out of agents:
-      else {
-        line=$0; sub(/^ +/, "", line)
-        key=line; sub(/:.*/, "", key)
-        val=line; sub(/^[^:]*:[ ]*/, "", val); sub(/[ ]*#.*/, "", val); sub(/ +$/, "", val)
-        if (key != "" && val != "")
-          items = items (items ? "," : "") "\"" key "\":\"" val "\""
-        next
-      }
-    }
-    END { printf "{%s}", items }
-  ' "$cfg")
-fi
+case "$cmd" in
+  init)
+    [ $# -ge 1 ] || die "usage: maestro init <slug>"
+    slug="$1"
+    dir="$ROOT/.maestro/$slug/requirement"
+    mkdir -p "$dir"
+    if [ ! -e "$dir/requirement.md" ]; then
+      cat > "$dir/requirement.md" <<'EOF'
+# Requirement
 
-# Dashboard port: maestro.config.yaml `web.port`, else 8080. The web UI binds this
-# via Conductor's --web-port CLI flag (it is NOT a workflow input — the schema has
-# no such key and Conductor reads it before any workflow runs).
-web_port=8080
-if [ -f "$cfg" ]; then
-  p=$(awk '/^web:/{w=1;next} w&&/^[^[:space:]]/{w=0} w&&$1=="port:"{print $2; exit}' "$cfg")
-  [ -n "$p" ] && web_port="$p"
-fi
-
-req_dir=".maestro/${slug}/requirement"
-if [ ! -d "$req_dir" ] || [ -z "$(find "$req_dir" -type f -size +0c -print -quit 2>/dev/null)" ]; then
-  echo "maestro: WARN — $req_dir is missing or empty. Run: maestro init $slug (then add your requirement files)." >&2
-fi
-
-if ! command -v conductor >/dev/null 2>&1; then
-  echo "maestro: 'conductor' not found on PATH — it orchestrates the workflows." >&2
-  echo "         If you just installed it, open a NEW terminal (or run: hash -r) so this" >&2
-  echo "         shell picks up the updated PATH, then retry." >&2
-  echo "         Otherwise install it (needs uv), then re-run:" >&2
-  echo "           uv tool install --force --with 'claude-agent-sdk>=0.1.0' git+https://github.com/microsoft/conductor.git" >&2
-  echo "         Or re-run the pack installer (install.sh), which installs uv + conductor for you." >&2
-  exit 1
-fi
-
-exec conductor run "$wf" \
-  --web --web-port "$web_port" \
-  --input feature_slug="$slug" \
-  --input feature="$slug" \
-  --input requirement_dir="$req_dir" \
-  --input model="$model_json" \
-  "$@"
+Describe the feature here. Every file in this folder is read as the requirement:
+drop in PRDs, ticket exports, API notes, screenshots-as-markdown — anything.
+EOF
+    fi
+    echo "scaffolded $dir"
+    echo "next: fill in the requirement, then run:  maestro $slug"
+    ;;
+  validate)
+    wf="${1:-workflows/sdlc-main.yaml}"
+    exec "${CTL[@]}" validate "$wf"
+    ;;
+  status)
+    [ $# -ge 1 ] || die "usage: maestro status <slug>"
+    exec "${CTL[@]}" status --slug "$1"
+    ;;
+  reset)
+    [ $# -ge 1 ] || die "usage: maestro reset <slug> [--step X ... | --all] [--cascade]"
+    slug="$1"; shift
+    exec "${CTL[@]}" reset --slug "$slug" "$@"
+    ;;
+  ui)
+    html="$ROOT/ui/builder.html"
+    [ -f "$html" ] || die "ui/builder.html not found"
+    case "$(uname -s)" in
+      Darwin) open "$html" ;;
+      Linux)  xdg-open "$html" >/dev/null 2>&1 || die "xdg-open failed — open $html manually" ;;
+      *)      echo "open this file in a browser: $html" ;;
+    esac
+    ;;
+  *)
+    # maestro <slug> [workflow] — preflight, then hand off to the interactive session
+    slug="$cmd"
+    wf="${1:-workflows/sdlc-main.yaml}"
+    [ -f "$ROOT/$wf" ] || die "workflow not found: $wf"
+    "${CTL[@]}" validate "$wf" >/dev/null || die "workflow has validation errors — fix them first (maestro validate $wf)"
+    req="$ROOT/.maestro/$slug/requirement"
+    if [ ! -d "$req" ] || ! find "$req" -type f -size +1c 2>/dev/null | grep -q .; then
+      echo "warning: no requirement files at .maestro/$slug/requirement/ — run: maestro init $slug" >&2
+    fi
+    if [ -f "$ROOT/.maestro/$slug/state.yaml" ]; then
+      echo "existing run found — it will RESUME where it left off (maestro status $slug to inspect)."
+    fi
+    echo
+    echo "Workflows run inside your interactive AI session (no API keys needed)."
+    echo "Open your IDE (Claude Code, Cursor, …) in this repo and run:"
+    echo
+    if [ "$wf" = "workflows/sdlc-main.yaml" ]; then
+      echo "    /maestro $slug"
+    else
+      echo "    /maestro $slug $wf"
+    fi
+    echo
+    ;;
+esac

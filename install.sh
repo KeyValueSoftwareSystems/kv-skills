@@ -1,163 +1,139 @@
 #!/usr/bin/env bash
 # =============================================================================
-# install.sh — install the KeyValue AI-SDLC pack into your project
+# install.sh — install the Maestro pack (KeyValue AI-SDLC v2) into your project
 # =============================================================================
 # Run this from the ROOT of your main repo. It:
-#   1. installs OUR skills          (npx skills add KeyValueSoftwareSystems/kv-skills)
-#   2. installs the external skills the flow uses, one by one (npx skills add ...)
-#   3. copies the Conductor workflows + config into your repo
-#      (+ installs the `maestro <slug>` run wrapper on PATH)
-#   4. installs Conductor (optional — needs `uv`; skip with --no-conductor)
+#   1. installs OUR skills + commands + agents into your AI-IDE config dirs
+#      (.claude/ and/or .cursor/ — skills, commands, agents)
+#   2. installs the external helper skills the flow delegates to (Superpowers)
+#   3. copies the engine + workflows + builder UI + maestro.config.yaml into
+#      your repo (these are runtime files the /maestro skill shells out to)
+#   4. installs the `maestro` helper CLI on PATH
+#
+# No Conductor. No claude-agent-sdk. No API keys. Workflows run inside your
+# interactive session via the /maestro skill; the engine is stdlib-only python3.
 #
 # Two ways to run — no clone required either way:
-#   • Piped (no clone): fetches the workflows/config from the repo tarball itself.
-#       curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh \
-#         | bash -s -- claude-code cursor
-#   • From a checkout: copies the workflows/config sitting next to this script.
-#       /path/to/kv-skills/install.sh claude-code
+#   • Piped: curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh \
+#              | bash -s -- claude-code cursor
+#   • From a checkout: /path/to/kv-skills/install.sh claude-code
 #
-# Bare words are IDE/agent names (default: claude-code). Flags: --no-conductor.
+# Bare words are IDE targets: claude-code (default) and/or cursor.
 #
 # Env overrides:
-#   KV_SKILLS_REPO   our pack's GitHub slug   (default KeyValueSoftwareSystems/kv-skills)
-#   KV_SKILLS_REF    git ref for the tarball  (default main)
-#   DEST             where to copy workflows  (default: current directory)
+#   KV_SKILLS_REPO   pack's GitHub slug      (default KeyValueSoftwareSystems/kv-skills)
+#   KV_SKILLS_REF    git ref for the tarball (default main)
+#   DEST             where to copy runtime   (default: current directory)
+#   KV_BIN_DIR       where `maestro` goes    (default: ~/.local/bin)
 # =============================================================================
 set -uo pipefail   # not -e: one failed skill install must not abort the rest
 
 REPO="${KV_SKILLS_REPO:-KeyValueSoftwareSystems/kv-skills}"
 REF="${KV_SKILLS_REF:-main}"
 DEST="${DEST:-$PWD}"
+BIN_DIR="${KV_BIN_DIR:-$HOME/.local/bin}"
 
-# Parse args: bare words are IDE/agent names; --no-conductor skips step 4.
-INSTALL_CONDUCTOR=1
 AGENTS=""
 for a in "$@"; do
   case "$a" in
-    --no-conductor) INSTALL_CONDUCTOR=0 ;;
     -*) echo "unknown flag: $a" >&2; exit 2 ;;
     *)  AGENTS="$AGENTS $a" ;;
   esac
 done
-[ -n "$AGENTS" ] || AGENTS="claude-code"          # default IDE
-AFLAGS=""; for ag in $AGENTS; do AFLAGS="$AFLAGS -a $ag"; done
+AGENTS="${AGENTS# }"
+[ -n "$AGENTS" ] || AGENTS="claude-code"
 
-command -v npx >/dev/null 2>&1 || { echo "npx (Node.js) is required." >&2; exit 1; }
+say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+note() { printf '  %s\n' "$*"; }
 
-# Locate the pack files (workflows/ + skills.config.yaml). Use the checkout we're
-# running from if there is one; otherwise download the repo tarball — no clone.
+# ---------------------------------------------------------------- source dir
+# From a checkout: use the files next to this script. Piped: fetch the tarball.
+SRC=""
 CLEANUP=""
-SELF="${BASH_SOURCE[0]:-}"
-if [ -n "$SELF" ] && [ -f "$SELF" ] && [ -d "$(dirname "$SELF")/workflows" ]; then
-  SRC="$(cd "$(dirname "$SELF")" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [ -n "$script_dir" ] && [ -f "$script_dir/engine/maestroctl.py" ]; then
+  SRC="$script_dir"
 else
-  command -v curl >/dev/null 2>&1 || { echo "curl required for no-clone install." >&2; exit 1; }
-  command -v tar  >/dev/null 2>&1 || { echo "tar required for no-clone install." >&2; exit 1; }
-  CLEANUP="$(mktemp -d)"
-  echo "==> Downloading pack ($REPO@$REF)"
-  curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" | tar -xz -C "$CLEANUP" \
-    || { echo "could not download $REPO@$REF — set KV_SKILLS_REPO/KV_SKILLS_REF." >&2; rm -rf "$CLEANUP"; exit 1; }
-  SRC="$(cd "$CLEANUP"/*/ && pwd)"                # the single extracted top dir
+  say "Fetching $REPO@$REF …"
+  tmp="$(mktemp -d)"
+  CLEANUP="$tmp"
+  if curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$REF" | tar -xz -C "$tmp" 2>/dev/null; then
+    SRC="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
+  fi
+  [ -n "$SRC" ] && [ -f "$SRC/engine/maestroctl.py" ] || { echo "could not fetch $REPO@$REF" >&2; exit 1; }
 fi
+trap '[ -n "$CLEANUP" ] && rm -rf "$CLEANUP"' EXIT
 
-echo "==> Installing skills for:$AFLAGS"
-
-# 1) our skills
-echo "--> $REPO (our skills)"
-npx skills add "$REPO" --skill '*' $AFLAGS -y </dev/null \
-  || echo "WARN: could not install $REPO (published? set KV_SKILLS_REPO)"
-
-# 2) external skills the default flow uses (Superpowers pack, MIT — installed from source)
-EXTERNAL_SKILLS="
-brainstorming
-writing-plans
-test-driven-development
-requesting-code-review
-systematic-debugging
-using-git-worktrees
-"
-for s in $EXTERNAL_SKILLS; do
-  echo "--> obra/superpowers --skill $s"
-  npx skills add obra/superpowers --skill "$s" $AFLAGS -y </dev/null \
-    || echo "WARN: failed to install external skill: $s"
+# ---------------------------------------------------------------- 1. skills/commands/agents
+copy_tree() { # copy_tree <src-subdir> <dst-dir>
+  mkdir -p "$2"
+  cp -R "$SRC/$1/." "$2/" && note "$1 -> $2"
+}
+for agent in $AGENTS; do
+  case "$agent" in
+    claude-code)
+      say "Installing skills + commands + agents for Claude Code"
+      copy_tree skills   "$DEST/.claude/skills"
+      copy_tree commands "$DEST/.claude/commands"
+      copy_tree agents   "$DEST/.claude/agents"
+      ;;
+    cursor)
+      say "Installing skills + commands for Cursor"
+      copy_tree skills   "$DEST/.cursor/skills"
+      copy_tree commands "$DEST/.cursor/commands"
+      # Cursor has no subagent registry; the /maestro skill degrades to inline mode.
+      ;;
+    *) echo "  unknown IDE target: $agent (skipping)" >&2 ;;
+  esac
 done
 
-# 3) copy the Conductor workflows + config into the target repo (idempotent — no nesting)
-echo "==> Copying workflows + config into $DEST"
-mkdir -p "$DEST/workflows"
-cp -R "$SRC/workflows/."         "$DEST/workflows/"
-cp    "$SRC/skills.config.yaml"  "$DEST/skills.config.yaml"
-
-# NOTE: a feature's files live under .maestro/<slug>/ (requirement + generated
-# artifacts) and are intentionally git-tracked for now — nothing is added to
-# .gitignore here.
-
-# 3b) install the slug-only run wrapper (maestro <slug>) on PATH — same dir uv
-#     uses for `conductor`, so it's already on PATH when Conductor is installed.
-BIN_DIR="${KV_BIN_DIR:-$HOME/.local/bin}"
-if [ -f "$SRC/bin/maestro" ]; then
-  mkdir -p "$BIN_DIR"
-  cp "$SRC/bin/maestro" "$BIN_DIR/maestro" && chmod +x "$BIN_DIR/maestro" \
-    && echo "==> Installed maestro -> $BIN_DIR/maestro" \
-    || echo "WARN: could not install maestro wrapper into $BIN_DIR"
-  case ":$PATH:" in
-    *":$BIN_DIR:"*) : ;;
-    *) echo "    NOTE: $BIN_DIR is not on your PATH — add it to use \`maestro\`." ;;
-  esac
+# ---------------------------------------------------------------- 2. external skills
+say "Installing external helper skills (Superpowers)"
+if command -v npx >/dev/null 2>&1; then
+  for s in brainstorming writing-plans test-driven-development requesting-code-review \
+           systematic-debugging using-git-worktrees; do
+    for agent in $AGENTS; do
+      npx -y skills add obra/superpowers --skill "$s" -a "$agent" -y >/dev/null 2>&1 \
+        && note "$s ($agent)" || note "SKIPPED $s ($agent) — install later: npx skills add obra/superpowers --skill $s -a $agent"
+    done
+  done
+else
+  note "npx not found — skipping. The flow still works; skills fall back to inline behavior."
+  note "Install later with: npx skills add obra/superpowers --skill <name> -a <ide>"
 fi
 
-# 4) Conductor (optional)
-if [ "$INSTALL_CONDUCTOR" = 1 ]; then
-  # Conductor is a uv tool. If uv is missing, install it first (the maestro wrapper
-  # is useless without conductor on PATH) — official astral-sh installer, into the
-  # same ~/.local/bin we already put maestro in.
-  if ! command -v uv >/dev/null 2>&1; then
-    echo "==> 'uv' not found — installing it (astral-sh) so Conductor can be installed"
-    if curl -LsSf https://astral.sh/uv/install.sh | sh; then
-      # Make uv usable for the rest of THIS script: source the env file the installer
-      # writes, and prepend its bin dir to PATH as a fallback.
-      UV_BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
-      # shellcheck disable=SC1090
-      [ -f "$UV_BIN/env" ] && . "$UV_BIN/env"
-      case ":$PATH:" in *":$UV_BIN:"*) : ;; *) PATH="$UV_BIN:$PATH" ;; esac
-    else
-      echo "WARN: 'uv' install failed."
-    fi
-  fi
-
-  if command -v uv >/dev/null 2>&1; then
-    echo "==> Installing Conductor (with claude-agent-sdk)"
-    uv tool install --force --with 'claude-agent-sdk>=0.1.0' \
-      git+https://github.com/microsoft/conductor.git \
-      || echo "WARN: Conductor install failed — install manually (see README)."
-    # uv just added its bin dir to your shell profile, but THIS shell's PATH/command
-    # hash won't reflect it — a fresh session (or `hash -r`) will. Flag that so the
-    # first `maestro` call doesn't surprise you with 'conductor: not found'.
-    if ! command -v conductor >/dev/null 2>&1; then
-      echo "    NOTE: 'conductor' was installed but isn't visible in THIS shell yet."
-      echo "          Open a new terminal (or run: hash -r) before using \`maestro\`."
-    fi
-  else
-    echo "==> Skipping Conductor: 'uv' unavailable. To run the workflows later, install"
-    echo "    uv (https://docs.astral.sh/uv/getting-started/installation/), then:"
-    echo "    uv tool install --force --with 'claude-agent-sdk>=0.1.0' git+https://github.com/microsoft/conductor.git"
-  fi
+# ---------------------------------------------------------------- 3. runtime files
+say "Copying runtime into $DEST"
+mkdir -p "$DEST/workflows" "$DEST/engine" "$DEST/ui" "$DEST/docs"
+cp -R "$SRC/engine/." "$DEST/engine/" && note "engine/ (stdlib-only python3)"
+rm -rf "$DEST/engine/tests" "$DEST/engine/__pycache__" 2>/dev/null
+cp -R "$SRC/workflows/." "$DEST/workflows/" && note "workflows/ (example pack — customize freely)"
+cp "$SRC/ui/builder.html" "$DEST/ui/builder.html" && note "ui/builder.html (visual workflow builder)"
+cp "$SRC/docs/workflow-spec.md" "$DEST/docs/workflow-spec.md" 2>/dev/null && note "docs/workflow-spec.md"
+if [ -e "$DEST/maestro.config.yaml" ]; then
+  note "maestro.config.yaml exists — left untouched"
+else
+  cp "$SRC/maestro.config.yaml" "$DEST/maestro.config.yaml" && note "maestro.config.yaml"
 fi
 
-[ -n "$CLEANUP" ] && rm -rf "$CLEANUP"
+# ---------------------------------------------------------------- 4. maestro CLI
+say "Installing the maestro helper CLI"
+mkdir -p "$BIN_DIR"
+cp "$SRC/bin/maestro" "$BIN_DIR/maestro" && chmod +x "$BIN_DIR/maestro" && note "$BIN_DIR/maestro"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) note "NOTE: $BIN_DIR is not on your PATH — add:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+esac
 
-cat <<EOF
+say "Done."
+cat <<'EOF'
+  Get started:
+    maestro init my-feature          # scaffold .maestro/my-feature/requirement/
+    # …drop requirement files in, then open your IDE (Claude Code / Cursor) and run:
+    /maestro my-feature              # runs workflows/sdlc-main.yaml, resumable
 
-Done. Next:
-  • Slash commands (any IDE):  /hld  /design  /backend-impl  /qa  ...
-  • Full pipeline, the easy way (from your repo root):
-      maestro init saved-search && \$EDITOR .maestro/saved-search/requirement/requirement.md
-      maestro saved-search                              # default pipeline (dashboard on :8080)
-      maestro saved-search --path=workflows/design.yaml # or any individual/custom workflow
-  • Full pipeline, explicit (Conductor):
-      cd workflows && conductor validate main.yaml
-      conductor run main.yaml --web \\
-        --input feature="Add saved-search" --input feature_slug="saved-search"
-  • Swap any behavior by editing skills.config.yaml (one file, everywhere).
-  • Set the default model / web port in workflows/maestro.config.yaml (KV_MODEL_DEFAULT / KV_WEB_PORT).
+  Also:
+    maestro ui                       # visual workflow builder (create/edit workflows)
+    maestro validate workflows/…     # lint a workflow
+    maestro status my-feature        # step table for a run
 EOF

@@ -1,257 +1,139 @@
-# Maestro
+# Maestro — KeyValue AI-SDLC
 
-A ready-to-install pack of **AI skills** and a **workflow orchestrator** that runs a feature
-through the KeyValue software-development lifecycle: high-level design → detailed design →
-implementation → review → QA → release — with a human approval at each gate.
+Run the full software lifecycle — design → review → implement → QA → release — as an
+orchestrated, resumable workflow **inside your own AI coding session**. No headless
+runners, no API keys, no per-seat orchestration bill: the *lead agent* is your
+interactive Claude Code / Cursor session, driven by one skill.
 
-## Why
+```
+requirement → HLD → [open-questions loop → approve] → parallel LLDs → API contract
+   → functional test cases → architecture review → [approve]
+   → implement per stack (parallel, sliced, reviewed, bounded fix loop)
+   → QA → review pack → [approve → release]
+```
 
-Building a feature well means the same steps every time: design it, review the design,
-implement to a contract, test it, review the code, QA it, ship it. This pack encodes those
-steps once so every developer runs them the same way.
+Every producing step writes an artifact to disk and the engine refuses to advance
+without it — **proof, not promises**. Every irreversible decision goes through a human
+gate. Kill your session anytime; the run resumes exactly where it stopped.
 
-- **Run it your way.** Let [Conductor](https://github.com/microsoft/conductor) orchestrate the whole pipeline end-to-end, or run each
-  step yourself as a slash command (`/plan`, `/api-contract`, `/backend-impl`, …) in Claude
-  Code, Cursor, or Copilot.
-- **One place to change behavior.** Every step's behavior lives in its skill; which skill (and
-  any helper skill) backs each step is one line in [`skills.config.yaml`](skills.config.yaml).
-  Change it there and it changes everywhere.
-- **Proof, not promises.** Every step writes an artifact to disk, and the pipeline checks the
-  file exists before moving on.
+## How it works
 
-## Prerequisites — set up the workspace first
+```
+            you: /maestro my-feature
+                     │
+       ┌─────────────▼──────────────┐    engine/maestroctl.py (stdlib python3)
+       │  LEAD AGENT (your session) │───► next → ONE action as JSON
+       │  dispatches, never decides │◄─── complete / gate-record / fail
+       └──┬─────────┬──────────┬────┘
+          ▼         ▼          ▼
+      subagents   scripts    you (gates)
+      (skill +    (validators,
+       model per   stubs)
+       step)
+```
 
-This pack runs against an **umbrella workspace**: one parent git repo per project that becomes the
-agent's working surface for a whole feature. Stand it up once per project, then install the pack
-into it. The flow assumes these are in place — do them in order.
+- **`workflow.yaml`** — the graph: 5 node types (`agent`, `gate`, `script`, `parallel`,
+  `subworkflow`), per-node routes with tiny conditions, and **back-edges for loops**
+  (an arrow to any earlier step; the engine cascade-resets downstream work and enforces
+  a per-node visit cap so loops can't run away). Spec: [docs/workflow-spec.md](docs/workflow-spec.md).
+- **`.maestro/<slug>/state.yaml`** — the run ledger. Only the engine writes it. Resume,
+  revise-cascades, gate history, parallel-join bookkeeping all live here.
+- **The lead agent never interprets the graph.** The deterministic resolver serves one
+  fully-rendered action at a time; the LLM just dispatches it. That is what makes an
+  LLM-driven orchestrator reliable — and it's all plain, tested Python
+  (`python3 engine/tests/run_all.py`, no LLM in the loop).
+- **Agent steps are instruction-first**: write what the step should do; optionally pin
+  a skill (the shipped workflows pin everything for reproducibility) and a model.
+  Subagents run in parallel where the harness supports it (Claude Code); elsewhere the
+  same workflow runs inline and sequential — same engine, same state.
 
-- **One parent repo, N child clones.** Keep every service repo independent (own branches, PRs,
-  CI) — don't merge them into a monorepo. Instead clone them, **gitignored**, into the umbrella
-  under `codebase/` so a single agent sees the frontend, backend, and every microservice at once,
-  instead of one repo in isolation. A `workspace.yaml` manifest lists the repos.
-- **One command for the whole stack.** Wire the full stack up and down behind a single command
-  (e.g. `stack up` / `stack down` over Docker Compose, Tilt, or Nix — team's choice). Host
-  prerequisites and secrets stay human-owned in a `SETUP.md`; the workflow never touches them.
-- **Docs + tests centralised in the umbrella.** Keep the per-feature docs tree (`docs/technical`,
-  `docs/functional`, `docs/business`) and the cross-repo integration + UI-automation suites
-  (`test/integration`, `test/ui-automation`) here, so one suite spans all repos.
-- **Source-of-truth MCPs connected.** The design flow assumes a PRD + designs already exist —
-  connect Jira / Confluence / Figma over MCP so the agent reads tickets, specs, and designs
-  directly.
+## The visual builder
 
-> The umbrella is a per-project setup, not something this pack ships (yet). Set it up manually for
-> now; the pack installs into it and every feature — requirement input and generated artifacts —
-> lives under `.maestro/<slug>/` inside it.
+`maestro ui` (or double-click `ui/builder.html`) — a single self-contained page, no
+server, works offline:
+
+- start from a **template gallery** (the shipped SDLC workflows) or a blank canvas;
+- **instruction-first node editing** — describe the step; skill defaults to *Auto*
+  (pin one under Advanced), model/agent are dropdowns;
+- drag arrows between nodes — **arrows pointing back create loops**, shown dashed with
+  their repeat-limit badge;
+- gates' options *are* their outgoing edges; parallel branches edit via drill-in;
+- live validation with friendly messages; one-click export that the engine accepts
+  (positions persist in a `ui:` key the engine ignores).
 
 ## Install
 
-**Requires:** [Node.js](https://nodejs.org) (for `npx`), plus `curl` + `tar` (standard on
-macOS/Linux).
-
-One command from the root of **your** repo:
+From the root of your project repo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh | bash -s -- claude-code
+curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh \
+  | bash -s -- claude-code cursor        # pick your IDE(s)
 ```
 
-Or for several IDEs at once:
+Installs: our skills/commands/agents into `.claude/` / `.cursor/`, the six external
+Superpowers skills the flow delegates to, `engine/` + `workflows/` + `ui/` +
+`maestro.config.yaml` into your repo, and the `maestro` CLI onto your PATH. The engine
+is stdlib-only python3 — nothing else to install.
+
+## Run
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KeyValueSoftwareSystems/kv-skills/main/install.sh | bash -s -- claude-code cursor
+maestro init my-feature      # scaffolds .maestro/my-feature/requirement/
+# drop requirement files in (PRDs, tickets, notes — every file is read)
 ```
 
-The installer:
+Then in your IDE:
 
-1. installs **our skills** (`npx skills add KeyValueSoftwareSystems/kv-skills`);
-2. installs the **external helper skills** the flow uses ([Superpowers](https://github.com/obra/superpowers) — brainstorming, planning, TDD, code review, debugging, worktrees);
-3. copies the **Conductor workflows** + `skills.config.yaml` into your repo (fetched from the repo tarball when run piped);
-4. installs **Conductor** (installing [`uv`](https://github.com/astral-sh/uv) first if it's missing; skip the whole step with `--no-conductor`).
+```
+/maestro my-feature                          # full pipeline (workflows/sdlc-main.yaml)
+/maestro my-feature workflows/design.yaml    # just one phase
+```
 
-> Conductor runs the full pipeline; you don't need it if you only use the slash commands.
-
-## How to run
-
-### As an orchestrator (Conductor)
-
-Conductor runs the skills for you, end to end, with automatic approval gates. Same skills,
-same artifacts — it just drives the sequence.
-
-**The easy way — by feature slug.** Scaffold the requirement folder, drop your requirement
-files in it, and run one command from your repo root:
+The lead agent validates, resumes or starts the run, spawns a subagent per step, asks
+you at gates, and reports where every artifact landed. Useful alongside:
 
 ```bash
-maestro init user-authentication                          # create .maestro/user-authentication/requirement/
-$EDITOR .maestro/user-authentication/requirement/requirement.md   # write the requirement (add more files if you like)
-maestro user-authentication                               # run full pipeline
-maestro user-authentication --path=workflows/design.yaml  # run design phase only
+maestro status my-feature                    # step table, gate history, active steps
+maestro validate workflows/my-flow.yaml      # lint any workflow
+maestro reset my-feature --step review --cascade   # force a rebuild from a step
+maestro ui                                   # the builder
 ```
 
-`maestro` (installed by the installer) reads the requirement from the folder
-`.maestro/<slug>/requirement/` (every file in it) and runs the default pipeline at
-`http://127.0.0.1:8080` (set `web.port` in `maestro.config.yaml`). Use `--path=<file>`
-to run a specific workflow. Extra flags go after `--`, e.g. `maestro user-authentication -- --dry-run`.
+Prefer manual control? Every skill is also a slash command (`/plan`, `/backend-impl`,
+`/qa`, …) — same skills, no orchestration.
 
-Run individual workflows for specific phases:
+## Layout
 
-| Workflow | Command | Purpose |
-|----------|---------|---------|
-| [`design.yaml`](workflows/design.yaml) | `maestro <slug> --path=workflows/design.yaml` | HLD → LLDs → API contract → functional test cases |
-| [`backend_impl.yaml`](workflows/backend_impl.yaml) | `maestro <slug> --path=workflows/backend_impl.yaml` | Backend implementation & tests |
-| [`frontend_impl.yaml`](workflows/frontend_impl.yaml) | `maestro <slug> --path=workflows/frontend_impl.yaml` | Frontend implementation & tests |
-| [`qa.yaml`](workflows/qa.yaml) | `maestro <slug> --path=workflows/qa.yaml` | QA automation |
+```
+skills/      one SKILL.md per SDLC step + skills/maestro (the lead agent)
+agents/      subagent definitions (planner, implementer, reviewer, qa, analyst, general)
+commands/    thin slash-command shims
+workflows/   the example pack: sdlc-main / design / impl / qa  — customize or replace
+engine/      the deterministic engine (validate · init · next · complete · gate-record
+             · fail · reset · rebase · status · graph) + schemas + helper validators
+ui/          builder.html (single-file visual editor) + embed.py
+maestro.config.yaml   models & aliases, engine defaults, fix-loop cap, external-skill
+                      delegation, artifact path map
+.maestro/<slug>/      everything for one feature: requirement/ + all artifacts + state.yaml
+```
 
-### Resuming a partially-run workflow
+## Customizing
 
-Sub-workflows record completed steps in `.maestro/<slug>/state.json`. Re-run the same command to
-resume from the first incomplete step. To force a rebuild:
+- **Change a step's behavior** — edit its skill (`skills/*/SKILL.md`).
+- **Change the flow** — edit the workflow YAML (or use `maestro ui`). Steps name skills
+  directly; swapping one is a one-line change.
+- **Models** — per node (`model: sonnet`), per workflow (`defaults.model`), or globally
+  (`maestro.config.yaml → models`). Aliases keep workflows stable when model ids rotate.
+- **Loop bounds** — per node `max_visits` (+ `on_exhausted`), backstopped by
+  `defaults.max_visits`; the fix loops use `${config.fix_loop.max_attempts}`.
+- The merge/contract-check/archive scripts in the example pack are **POC stubs** —
+  wire them to your real runners.
+
+## Checks
 
 ```bash
-python3 workflows/state.py reset --slug <slug> --step <step-id>   # rebuild one step
-python3 workflows/state.py reset --slug <slug> --all              # rebuild everything
+python3 engine/tests/run_all.py          # 66 tests: parser, validator, ledger, resolver
+                                         # simulations, full-SDLC e2e (no LLM needed)
+python3 testdata/test_ui_schema_sync.py  # UI ↔ engine anti-drift (+ cross-parser test)
+open ui/builder.html#selftest            # in-browser round-trip suite
 ```
-
-Human approval gates always re-ask, even on resume.
-
-### As skills (you orchestrate manually)
-
-Run the slash commands yourself, in order, in any IDE (Claude Code, Cursor, Copilot) — you
-review each artifact before moving to the next:
-
-```
-/plan feature="Add user authentication" feature_slug="user-authentication"   # high-level design, then approve
-/backend-design  ∥  /frontend-design   # author the per-stack LLDs
-/api-contract          # reconcile the LLDs → the cross-repo contract
-/functional-testcases  # derive the functional test-case catalog QA will automate
-/architecture-review → /backend-impl → /backend-review
-/frontend-impl → /frontend-review → /qa → /verify → /fix → /review-pack
-```
-
-| Skill | Command | Edits code? | Purpose |
-|-------|---------|:-----------:|---------|
-| `plan` | `/plan` | no | High-level design (HLD): options, choice, risks |
-| `backend-design` / `frontend-design` | `/backend-design` · `/frontend-design` | no | Author the per-stack low-level design (LLD) — how the feature fits each stack |
-| `api-contract` | `/api-contract` | no | Reconcile the LLDs into the OpenAPI contract + acceptance criteria |
-| `functional-testcases` | `/functional-testcases` | no | Derive the functional test-case catalog (black-box, traceable) — the source `/qa` automates |
-| `backend-tasks` | `/backend-tasks` | no | Author the task DAG (`tasks.json`) — ordered tasks grouped into independent slices (fallback when the design phase didn't emit it) |
-| `backend-implement` | `/backend-impl` | yes | Implement to the contract, test-first, to backend standards |
-| `frontend-implement` | `/frontend-impl` | yes | Implement UI states + tests to frontend standards |
-| `qa-automation` | `/qa` | tests | Critical-journey E2E from acceptance criteria |
-| `architecture-review` | `/architecture-review` | no | Review the design: gaps, security, scaling |
-| `backend-review` / `frontend-review` | `/backend-review` · `/frontend-review` | no | Review the implementation |
-| `verify` | `/verify` | no | Run deterministic checks → proof report |
-| `fix-loop` | `/fix` | bounded | Fix failing checks (≤3 attempts), then escalate |
-| `human-review-pack` | `/review-pack` | no | Assemble the PR/release pack |
-
-Each editing skill carries the **standards** a change must meet (security, backward
-compatibility, migrations, accessibility, performance, …) and a **Safety** section: it will
-not write secrets or production config, and it stops to ask a human before anything
-destructive.
-
-## Customisable flow
-
-This is the basic workflow — a starting point you can customize to fit your process. Each step
-captures decision points, produces artifacts, and gates on their existence before advancing.
-Completed steps are recorded in `.maestro/<slug>/state.json` so partial runs resume correctly.
-Everything for a feature — the requirement input and all generated artifacts — lives under one
-folder, `.maestro/<slug>/`.
-
-```text
-                     feature + requirement
-                                │
-                                ▼
-                     ┌──────────────────────┐
-                     │       HLD  /plan      │  ⟲ open-questions loop
-                     └──────────┬───────────┘     (refine until resolved)
-                                ▼
-                          — ✋ approve —
-                                │
-                 ┌──────────────┴──────────────┐
-                 ▼                              ▼
-       ┌──────────────────┐          ┌───────────────────┐
-       │  backend-design  │          │  frontend-design  │
-       └─────────┬────────┘          └─────────┬─────────┘
-                 └──────────────┬──────────────┘
-                                ▼
-                          /api-contract
-                                │
-                                ▼
-                       functional-testcases      (test-case catalog → QA)
-                                │
-                                ▼
-                          — ✋ approve —
-                                │
-                                ▼
-                      architecture-review
-                                │
-                                ▼
-                          — ✋ approve —
-                                │
-                 ┌──────────────┴──────────────┐
-                 ▼                              ▼
-   ┌──────────────────────────┐   ┌──────────────────────────┐
-   │  backend-impl            │   │  frontend-impl           │
-   │  DAG→slices→merge→tests  │   │  DAG→slices→merge→tests  │
-   │  →verify→review          │   │  →a11y→review            │
-   └─────────────┬────────────┘   └─────────────┬────────────┘
-                 └──────────────┬───────────────┘
-                                ▼
-                            integrate
-                                │
-                                ▼
-                                QA
-                                │
-                                ▼
-                            review-pack
-                                │
-                                ▼
-                          — ✋ approve —
-                                │
-                                ▼
-                             release
-                                │
-                                ▼
-                        archive (stub → docs/)
-```
-
-## Configure
-
-### `skills.config.yaml` — Workflow configuration
-
-This file defines which skill backs each SDLC step. Edit once, change everywhere:
-
-| Setting | Purpose |
-|---------|---------|
-| `skill:` | Which skill runs this step |
-| `external:` | Optional helper skill (`none` to use built-in) |
-| `reviewer:` | Who reviews the output (backend/frontend stack) |
-| `artifacts:` | Where artifacts are saved (`<slug>` is feature slug) |
-
-**Review third-party skills before use.** The default flow requires [Superpowers](https://github.com/obra/superpowers) (installed by the script); all other slots default to `none` (built-in).
-
-### `workflows/maestro.config.yaml` — Orchestration settings
-
-Set Conductor-specific knobs (fix-loop cap, coverage gate, environment lifecycle):
-
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `models.default` | `claude-haiku-4-5` | Fallback model for any agent |
-| `models.agents.<name>` | `claude-haiku-4-5` | Per-agent model override |
-| `web.port` | `8080` | Dashboard port |
-| `fix_loop.max_attempts` | `3` | Fix-loop cap before escalating |
-| `gates.coverage_threshold` | `80` | Minimum test coverage |
-
-### Model selection
-
-**Per-agent, one place.** Each agent's model is set under `models.agents` in
-`maestro.config.yaml`, keyed by agent name:
-
-```yaml
-models:
-  default: claude-haiku-4-5   # fallback for any agent not listed
-  agents:
-    author_hld:  claude-sonnet-5   # bump just the HLD author
-    arch_review: claude-sonnet-5   # and the architecture review
-    # everything else -> claude-haiku-4-5
-```
-
-Any agent you don't list runs on `claude-haiku-4-5`.
