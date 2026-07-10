@@ -1,0 +1,22 @@
+version: 1
+name: bad
+start: p
+nodes:
+  - id: p
+    type: parallel
+    branches:
+      - id: b1
+        start: s1
+        steps:
+          - id: s1
+            type: subworkflow
+            workflow: testdata/workflows/valid-minimal.yaml
+            next: end
+      - id: b2
+        start: s2
+        steps:
+          - id: s2
+            type: script
+            run: ["true"]
+            next: end
+    next: end

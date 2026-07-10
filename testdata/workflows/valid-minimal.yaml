@@ -1,0 +1,10 @@
+version: 1
+name: minimal
+inputs:
+  slug: {type: string, required: true}
+start: only
+nodes:
+  - id: only
+    type: agent
+    instruction: Do the thing.
+    next: end
