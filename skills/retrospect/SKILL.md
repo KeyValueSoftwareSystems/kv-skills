@@ -22,7 +22,13 @@ file to write. Standalone? Write to a path you choose and tell the user.
    (loops that thrashed, steps that retried), failure reasons.
 2. **Mine the artifacts.** Blocking review findings, QA failures, contract mismatches —
    especially anything that recurred.
-3. **Emit a structured drop.** Write the incoming file named in your instruction as JSON:
+3. **Refresh the living docs for the domains this feature touched.** Using the same
+   structure `build-knowledge` produced, update `docs/technical/<domain>.md` and
+   `docs/functional/<domain>.md` for each domain the feature changed (auth, order-management,
+   …), and update `docs/architecture.md` if a service, connection, or data flow changed
+   (keep its Mermaid diagram(s) current). Edit in place; do not duplicate. Skip a file if the
+   feature did not affect it — this is a documentation refresh, not a rewrite.
+4. **Emit a structured lessons drop.** Write the incoming file named in your instruction as JSON:
 
    ```json
    {

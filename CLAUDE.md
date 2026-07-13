@@ -195,14 +195,20 @@ injected via `${memory.knowledge.<domain>}`). A lesson promotes into knowledge o
 **≥3 distinct runs** corroborate it (bootstrap lessons are `authoritative` and render
 immediately).
 
+There is a **second knowledge surface**: the committed living docs under `docs/` —
+per-domain `docs/technical/<domain>.md` + `docs/functional/<domain>.md`, and
+`docs/architecture.md` (Mermaid + how services connect). `build-knowledge` authors it from
+the codebase; `retrospect` refreshes touched domains after a feature. Human-facing, read by
+subagents as ordinary workspace context. It coexists with the injected lessons store.
+
 **The load-bearing separation (swappable skills):** the consolidation *functionality* —
 counting distinct runs, the threshold, promotion, pruning, rendering — is deterministic
 engine code in `engine/mem_consolidate.py`, invoked as a **`script` node**. Skills
-(`build-knowledge`, `retrospect`) only PRODUCE the structured `incoming/*.json` (their LLM
-judgement); swapping a skill cannot change how corroboration works. Reads: the resolver only
-READS the knowledge tier, once, at `init`, freezing a per-run `memory-snapshot.json`
-(`engine/memory.py`). The pre-merge `archive` phase of `sdlc-main.yaml` runs the harvest by
-default. Full conventions: `docs/memory.md`.
+(`build-knowledge`, `retrospect`) only PRODUCE judgement outputs — the `docs/` knowledge base
+and the structured `incoming/*.json` lessons; swapping a skill cannot change how corroboration
+works. Reads: the resolver only READS the lessons knowledge tier, once, at `init`, freezing a
+per-run `memory-snapshot.json` (`engine/memory.py`). The pre-merge `archive` phase of
+`sdlc-main.yaml` runs the harvest by default. Full conventions: `docs/memory.md`.
 
 ## Editing this repo's prose
 

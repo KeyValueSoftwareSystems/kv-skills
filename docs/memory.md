@@ -1,12 +1,53 @@
 # Maestro memory — how the harness improves over time
 
-Maestro keeps a durable, file-based, human-readable **memory** of what it learns about a
-codebase. Lessons distilled from finished runs are accumulated and injected into future runs
-— so design and review get sharper over time — without ever making a running run
-non-deterministic.
+Maestro keeps a durable, file-based, human-readable memory of what it learns about a
+codebase. It has **two coexisting surfaces**, both built from the code and kept current by
+runs:
 
-The store lives at `.maestro/memory/` (the repo/umbrella root, alongside `.maestro/<slug>/`).
-It is git-tracked and shared across every feature slug in that workspace.
+1. **The living docs (`docs/`)** — a human-facing knowledge base: per-domain **technical**
+   and **functional** documentation plus an **architecture diagram**. `build-knowledge`
+   authors it from the codebase; `retrospect` refreshes the touched domains after each
+   feature. This is committed documentation the whole team reads, and it is part of the
+   workspace every subagent already sees.
+2. **The corroborated lessons (`.maestro/memory/`)** — terse, review-style learnings that
+   accrue across runs and are **injected** into future steps via `${memory.knowledge.*}`. A
+   lesson is only trusted once **≥3 distinct runs** corroborate it. This surface is frozen at
+   `init` so runs stay reproducible.
+
+Neither ever makes a running run non-deterministic (see "Reading: frozen at init").
+
+## Surface 1 — the living docs (`docs/`)
+
+Built from the code, organised as a docs tree; committed and human-editable:
+
+```
+docs/
+├── architecture.md          # Mermaid diagram(s) of every service/component + how they connect
+├── technical/
+│   ├── auth.md               # per-domain: modules, data model & schemas, APIs, storage, jobs
+│   └── order-management.md
+└── functional/
+    ├── auth.md               # per-domain: what it does, business rules, flows, edge cases
+    └── order-management.md
+```
+
+- **Domains** are the code's bounded contexts (`auth`, `order-management`, `catalog`, …),
+  kebab-case.
+- **`docs/architecture.md`** carries one or more ```mermaid diagrams plus a *How services
+  connect* section: per edge, the protocol (REST / gRPC / GraphQL / event-queue / shared DB),
+  direction, sync vs async, the data that flows, inter-service auth, and which datastore each
+  service owns.
+- **`build-knowledge`** (`/build-knowledge`) writes the whole tree from the codebase, once
+  per workspace, re-runnable (refresh in place). **`retrospect`** updates the touched
+  domains + `architecture.md` after a feature. Both are LLM-judgement skills — swap them
+  freely; the *structure* is fixed here and in their workflow node instructions, not baked
+  into engine code.
+
+## Surface 2 — the corroborated lessons (`.maestro/memory/`)
+
+The injected store lives at `.maestro/memory/` (the repo/umbrella root, alongside
+`.maestro/<slug>/`). It is git-tracked and shared across every feature slug in that
+workspace.
 
 ## The three tiers
 
@@ -122,14 +163,15 @@ are git-tracked, so a bad lesson or merge is reviewable and revertible.
 ## The lifecycle
 
 ```
-bootstrap (once/umbrella)  ──►  knowledge/ seeded from the existing codebase   (/build-knowledge)
-        │
+bootstrap (once/umbrella)  ──►  docs/{technical,functional}/<domain>.md + docs/architecture.md
+        │                       (+ seed cross-cutting lessons)            (/build-knowledge)
         ▼
-feature run inits ──► freezes knowledge snapshot ──► HLD/design/review steps read it
+feature run inits ──► freezes lessons snapshot ──► HLD/design/review steps read docs/ + lessons
         │
         ▼
 release approved ──► ARCHIVAL PHASE (before merge to master):
-        retrospect skill (this run → incoming/<slug>.json)
+        retrospect skill (refresh docs/ for touched domains + architecture.md;
+                          this run → incoming/<slug>.json)
           → mem_consolidate.py (incoming/* → candidates/*, promote ≥3 → knowledge/*.md)
           → publish curated docs (.maestro/<slug>/ → committed docs/)
         │
@@ -138,10 +180,12 @@ human merges the feature branch to master
 ```
 
 - **Bootstrap** — `/build-knowledge` (workflow `workflows/build-knowledge.yaml`, skill
-  `build-knowledge`). Recommended once per workspace; re-runnable and merges.
-- **Harvest** — the `retrospect` skill (distill → `incoming/`) then the engine's
-  `mem_consolidate.py` script, run by `workflows/retrospect.yaml` (standalone/off-cycle) and
-  inside the archival phase.
+  `build-knowledge`). Builds the `docs/` knowledge base (Surface 1) and seeds any
+  cross-cutting review lessons (Surface 2). Recommended once per workspace; re-runnable.
+- **Harvest** — the `retrospect` skill refreshes the touched `docs/` domains + architecture,
+  then distills lessons → `incoming/`, and the engine's `mem_consolidate.py` script folds
+  them; run by `workflows/retrospect.yaml` (standalone/off-cycle) and inside the archival
+  phase.
 - **Archival** — `workflows/archive.yaml` (harvest + publish), wired as the pre-merge
   `archive` phase of `sdlc-main.yaml`. Maestro does not perform the merge to master itself;
   archival is the gate that guarantees the harvest and doc-publish happen first.
