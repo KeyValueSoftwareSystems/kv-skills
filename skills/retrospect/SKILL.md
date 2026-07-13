@@ -32,12 +32,18 @@ wrong while running** — because both are where a future run can do better from
    breakages, worktree or merge trouble — anything (from `visits`/`attempts`/`status`,
    failure reasons, and the artifacts) that made the run stumble. Turn each into a lesson
    that helps a future run avoid it.
-3. **Refresh the living docs for the domains this feature touched.** Using the same
-   structure `build-knowledge` produced, update `docs/technical/<domain>.md` and
-   `docs/functional/<domain>.md` for each domain the feature changed (auth, order-management,
-   …), and update `docs/architecture.md` if a service, connection, or data flow changed
-   (keep its Mermaid diagram(s) current). Edit in place; do not duplicate. Skip a file if the
-   feature did not affect it — this is a documentation refresh, not a rewrite.
+3. **Add to / refresh the living docs — technical, functional, AND architectural.** Using
+   the same structure `build-knowledge` produced, for every domain the feature touched:
+   - **Technical** (`docs/technical/<domain>.md`) — CREATE the file if the feature introduced
+     a new domain; otherwise update it (new or changed modules, schemas, APIs, storage, jobs).
+   - **Functional** (`docs/functional/<domain>.md`) — likewise: create for a new domain, else
+     update (new or changed behaviour, business rules, flows, edge cases).
+   - **Architectural** (`docs/architecture.md`) — whenever the feature added or changed a
+     service, component, connection, or data flow: add the new node(s)/edge(s) to the Mermaid
+     diagram(s) and the matching entry in the "How services connect" section.
+   Create files that don't exist yet; edit existing ones in place (never duplicate). Skip a
+   surface only when the feature genuinely did not affect it — but wherever it did, ADD the
+   content, don't just tweak.
 4. **Emit a structured lessons drop.** Write the incoming file named in your instruction as JSON:
 
    ```json

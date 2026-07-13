@@ -22,10 +22,14 @@ nodes:
       .maestro/${inputs.slug}/state.yaml (gate decisions + their feedback/guidance text;
       per-step visits/attempts/status showing loops and retries) and the run's review/QA
       artifacts under .maestro/${inputs.slug}/. Then do BOTH:
-      1. Refresh the living docs for the domains this feature touched — update
-         docs/technical/<domain>.md and docs/functional/<domain>.md for each changed domain,
-         and docs/architecture.md if a service/connection/data-flow changed (keep its Mermaid
-         diagrams current). Edit in place; skip files the feature did not affect.
+      1. Add to / refresh the living docs — technical, functional AND architectural — for the
+         domains this feature touched. CREATE docs/technical/<domain>.md and
+         docs/functional/<domain>.md for any NEW domain the feature introduced, else update
+         the existing ones. Update docs/architecture.md whenever a service, component,
+         connection or data flow was added or changed — add the new node(s)/edge(s) to the
+         Mermaid diagram(s) and the matching "How services connect" entry. Create missing
+         files; edit existing ones in place (never duplicate); skip only a surface the feature
+         genuinely did not affect.
       2. Write a STRUCTURED lessons drop to .maestro/memory/incoming/${inputs.slug}.json as
          JSON: {"slug": "${inputs.slug}", "lessons": [{"domain": "<role>",
          "key": "<stable-kebab-key>", "text": "<one actionable sentence>"}, ...]}. Draw the
