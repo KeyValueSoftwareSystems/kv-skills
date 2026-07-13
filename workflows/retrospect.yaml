@@ -28,10 +28,15 @@ nodes:
          diagrams current). Edit in place; skip files the feature did not affect.
       2. Write a STRUCTURED lessons drop to .maestro/memory/incoming/${inputs.slug}.json as
          JSON: {"slug": "${inputs.slug}", "lessons": [{"domain": "<role>",
-         "key": "<stable-kebab-key>", "text": "<one actionable sentence>"}, ...]}. Choose each
-         `key` so another run seeing the same pattern picks the SAME key (that is how the
-         engine corroborates). Do NOT set authoritative. Do NOT write knowledge/ or
-         candidates/ — the engine renders those.
+         "key": "<stable-kebab-key>", "text": "<one actionable sentence>"}, ...]}. Draw the
+         lessons from TWO sources: (a) the changes the USER requested — every revise/review
+         request and gate feedback/guidance, i.e. where the run had to be corrected to meet
+         the requirement (read .maestro/${inputs.slug}/requirement/ to frame the gap); and
+         (b) the ISSUES faced while running — failed/retried steps, loops that hit their cap,
+         contract/QA/build breakages. Phrase each as forward-looking guidance so the next run
+         gets it right first time. Choose each `key` so another run seeing the same pattern
+         picks the SAME key (that is how the engine corroborates). Do NOT set authoritative.
+         Do NOT write knowledge/ or candidates/ — the engine renders those.
     skill: retrospect
     inputs: {slug: "${inputs.slug}"}
     outputs: [incoming_path, lessons_count, summary]

@@ -16,12 +16,22 @@ emit the same drop for the memory system to keep working.
 Your instruction names the run to read (its ledger + artifacts) and the single incoming JSON
 file to write. Standalone? Write to a path you choose and tell the user.
 
+The two things worth remembering are **what the user asked to change** and **what went
+wrong while running** — because both are where a future run can do better from the start.
+
 ## Method
-1. **Mine the ledger.** From the run's `state.yaml`: gate decisions and their
-   feedback/guidance text (what a human overrode and why), per-step `visits`/`attempts`
-   (loops that thrashed, steps that retried), failure reasons.
-2. **Mine the artifacts.** Blocking review findings, QA failures, contract mismatches —
-   especially anything that recurred.
+1. **Capture the user's requested changes.** This is the primary signal. Walk the gate
+   history in `state.yaml`: every revise/rework request and review finding the human raised,
+   the `feedback`/`guidance` text they gave, and anything they had to correct so the output
+   finally matched the requirement. Read the requirement itself (under
+   `.maestro/<slug>/requirement/`) to frame each as the gap it closed. Turn each into
+   forward-looking guidance so the NEXT run gets it right the first time — e.g. "list
+   endpoints must paginate — requested at contract review on add-orders".
+2. **Capture the issues faced while running.** Operational problems during the run: steps
+   that failed or retried, loops that hit their visit cap, contract-check / QA / build
+   breakages, worktree or merge trouble — anything (from `visits`/`attempts`/`status`,
+   failure reasons, and the artifacts) that made the run stumble. Turn each into a lesson
+   that helps a future run avoid it.
 3. **Refresh the living docs for the domains this feature touched.** Using the same
    structure `build-knowledge` produced, update `docs/technical/<domain>.md` and
    `docs/functional/<domain>.md` for each domain the feature changed (auth, order-management,

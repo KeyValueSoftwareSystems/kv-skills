@@ -9,10 +9,13 @@ runs:
    authors it from the codebase; `retrospect` refreshes the touched domains after each
    feature. This is committed documentation the whole team reads, and it is part of the
    workspace every subagent already sees.
-2. **The corroborated lessons (`.maestro/memory/`)** — terse, review-style learnings that
-   accrue across runs and are **injected** into future steps via `${memory.knowledge.*}`. A
-   lesson is only trusted once **≥3 distinct runs** corroborate it. This surface is frozen at
-   `init` so runs stay reproducible.
+2. **The corroborated lessons (`.maestro/memory/`)** — terse learnings **injected** into
+   future steps via `${memory.knowledge.*}`, drawn from two things each run reveals: **what
+   the user asked to change** (revise/review requests and gate feedback — where the run had
+   to be corrected to meet the requirement) and **the issues faced while running** (failed/
+   retried steps, loops that hit their cap, contract/QA/build breakages). A lesson is only
+   trusted once **≥3 distinct runs** corroborate it, and the surface is frozen at `init` so
+   runs stay reproducible.
 
 Neither ever makes a running run non-deterministic (see "Reading: frozen at init").
 
