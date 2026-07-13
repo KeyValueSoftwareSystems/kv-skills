@@ -1,5 +1,7 @@
 # Maestro — a deterministic orchestrator for agentic coding harnesses
 
+![Maestro — the deterministic orchestrator for AI coding harnesses](assets/maestro.png)
+
 Maestro runs a multi-step workflow — agents, human gates, scripts, loops, parallel
 forks — **inside your own AI coding session**. No headless runner, no API key, no
 per-seat orchestration bill: the *lead agent* is your interactive Claude Code / Cursor
@@ -147,6 +149,19 @@ The installer prints a recommended `.gitignore` and what to commit; **upgrade** 
 the same command (it re-fetches and overwrites `engine/`/`ui/`). *(Private-repo fork? The
 piped `curl` can't authenticate — clone it and run `./install.sh` from the checkout.)*
 
+**Per-stack packs.** Alongside the core SDLC skills, the pack ships per-stack reference
+skills + reviewers (Go, Java/Spring, Kotlin, Python/Django, React, Vue, Angular, Node,
+Rust, Flutter, Android, DB…). Install only what your repo uses:
+
+```bash
+./maestro install claude-code --stack go,react,db   # core + those stacks only
+# or let Maestro figure it out and document the repo in one shot:
+/maestro-init                                        # detect stack → install → build docs
+```
+
+Anything without a `stack:` tag is core and always installs; `--stack all` (or no flag)
+installs every stack.
+
 ## Run
 
 Everything happens inside your IDE — no CLI:
@@ -202,9 +217,12 @@ git-tracked on purpose (so a run resumes on any machine). Two consequences for a
 ## Layout
 
 ```
-skills/      one SKILL.md per SDLC step + skills/maestro (the lead agent)
-agents/      subagent definitions (planner, implementer, reviewer, qa, analyst, general)
-commands/    the /maestro slash-command shim (individual steps are invoked as skills)
+skills/      one SKILL.md per SDLC step + skills/maestro (the lead agent);
+             bootstrap skills (detect-stack, maestro-init, build-knowledge, retrospect);
+             per-stack reference packs tagged stack:<x>
+agents/      core subagents (planner, implementer, reviewer, qa, analyst, general)
+             + per-stack reviewers tagged stack:<x>
+commands/    /maestro and /maestro-init slash-command shims (steps are invoked as skills)
 workflows/   the example pack: sdlc-main / design / impl / qa  — customize or replace
 engine/      the deterministic engine (validate · init · next · complete · gate-record
              · fail · reset · rebase · status · graph · note) + ui_server.py + schemas + validators
