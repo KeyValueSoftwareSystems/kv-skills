@@ -41,7 +41,7 @@ nodes:
       Findings need evidence; set blocking=true only for must-fix issues.
     skill: architecture-review
     agent: reviewer
-    inputs: {slug: "${inputs.slug}", feature: "${inputs.feature}"}
+    inputs: {slug: "${inputs.slug}", feature: "${inputs.feature}", lessons: "${memory.knowledge.architecture-review}"}
     outputs: [review_path, blocking, summary]
     artifact: ".maestro/${inputs.slug}/reviews/architecture.md"
     max_visits: 4
