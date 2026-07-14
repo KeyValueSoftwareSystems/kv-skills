@@ -5,8 +5,7 @@
 # Run this from the ROOT of your main repo. It:
 #   1. installs OUR skills + commands + agents into your AI-IDE config dirs
 #      (.claude/ and/or .cursor/ — skills, commands, agents)
-#   2. installs the external helper skills the flow delegates to (Superpowers)
-#   3. copies the engine + workflows + builder UI into your repo
+#   2. copies the engine + workflows + builder UI into your repo
 #      (runtime files the /maestro skill shells out to)
 #
 # That's it — no CLI, no config file, no daemons. Everything runs inside your
@@ -128,14 +127,6 @@ if [ -z "$SRC" ]; then
 fi
 trap '[ -n "$CLEANUP" ] && rm -rf "$CLEANUP"' EXIT
 
-# Guard the dev-in-pack-repo case: running the installer from inside the kv-skills checkout
-# with DEST defaulting to that same checkout would copy files onto themselves and (worse)
-# delete the source engine/tests. Detect same-dir and skip the runtime copy.
-SAME_TREE=0
-if [ "$(cd "$SRC" && pwd -P)" = "$(cd "$DEST" && pwd -P)" ]; then
-  SAME_TREE=1
-fi
-
 # ---------------------------------------------------------------- 1. skills/commands/agents
 copy_tree() { # copy_tree <src-subdir> <dst-dir>
   mkdir -p "$2"
@@ -159,37 +150,18 @@ for agent in $AGENTS; do
   esac
 done
 
-# ---------------------------------------------------------------- 2. external skills
-say "Installing external helper skills (Superpowers)"
-if command -v npx >/dev/null 2>&1; then
-  for s in brainstorming writing-plans test-driven-development requesting-code-review \
-           systematic-debugging using-git-worktrees; do
-    for agent in $AGENTS; do
-      npx -y skills add obra/superpowers --skill "$s" -a "$agent" -y >/dev/null 2>&1 \
-        && note "$s ($agent)" || note "SKIPPED $s ($agent) — install later: npx skills add obra/superpowers --skill $s -a $agent"
-    done
-  done
-else
-  note "npx not found — skipping. The flow still works; skills fall back to inline behavior."
-  note "Install later with: npx skills add obra/superpowers --skill <name> -a <ide>"
-fi
-
-# ---------------------------------------------------------------- 3. runtime files
-if [ "$SAME_TREE" = "1" ]; then
-  say "Runtime copy skipped — installing inside the kv-skills checkout itself (source == dest)."
-else
-  say "Copying runtime into $DEST"
-  mkdir -p "$DEST/workflows" "$DEST/engine" "$DEST/ui" "$DEST/docs"
-  cp -R "$SRC/engine/." "$DEST/engine/" && note "engine/ (stdlib-only python3)"
-  rm -rf "$DEST/engine/tests" "$DEST/engine/__pycache__" 2>/dev/null
-  cp -R "$SRC/workflows/." "$DEST/workflows/" && note "workflows/ (example pack — customize freely)"
-  cp "$SRC/ui/builder.html" "$DEST/ui/builder.html" && note "ui/builder.html (visual workflow builder)"
-  cp "$SRC/docs/workflow-spec.md" "$DEST/docs/workflow-spec.md" 2>/dev/null && note "docs/workflow-spec.md"
-  # The repo-local dev wrapper + a copy of this installer, so `./maestro ui` and
-  # `./maestro install` work without re-fetching. The wrapper never writes run state.
-  cp "$SRC/bin/maestro" "$DEST/maestro" && chmod +x "$DEST/maestro" && note "maestro (dev wrapper: ui + install)"
-  cp "$SRC/install.sh" "$DEST/install.sh" 2>/dev/null && note "install.sh (re-run to upgrade)"
-fi
+# ---------------------------------------------------------------- 2. runtime files
+say "Copying runtime into $DEST"
+mkdir -p "$DEST/workflows" "$DEST/engine" "$DEST/ui" "$DEST/docs"
+cp -R "$SRC/engine/." "$DEST/engine/" && note "engine/ (stdlib-only python3)"
+rm -rf "$DEST/engine/tests" "$DEST/engine/__pycache__" 2>/dev/null
+cp -R "$SRC/workflows/." "$DEST/workflows/" && note "workflows/ (example pack — customize freely)"
+cp "$SRC/ui/builder.html" "$DEST/ui/builder.html" && note "ui/builder.html (visual workflow builder)"
+cp "$SRC/docs/workflow-spec.md" "$DEST/docs/workflow-spec.md" 2>/dev/null && note "docs/workflow-spec.md"
+# The repo-local dev wrapper + a copy of this installer, so `./maestro ui` and
+# `./maestro install` work without re-fetching. The wrapper never writes run state.
+cp "$SRC/bin/maestro" "$DEST/maestro" && chmod +x "$DEST/maestro" && note "maestro (dev wrapper: ui + install)"
+cp "$SRC/install.sh" "$DEST/install.sh" 2>/dev/null && note "install.sh (re-run to upgrade)"
 
 say "Done."
 cat <<'EOF'
