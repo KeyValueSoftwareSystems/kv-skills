@@ -71,12 +71,14 @@ python3 engine/maestroctl.py init --slug <slug> --workflow <workflow> \
   to type: the human supplies decisions, the lead agent runs every `maestroctl` invocation.
 - Ensure the requirement folder exists (`mkdir -p .maestro/<slug>/requirement/`) so the
   user has somewhere to drop files, but do NOT block on it — the **workflow** owns what
-  happens when it's empty. The shipped pack surfaces a gate ("add files & re-check /
-  brainstorm it with me / abort") and, if the user chooses, brainstorms the requirement
-  through gated Q&A before authoring the HLD. If you already know the user has a PRD/notes to
-  paste, point them at that folder first; otherwise just init and run the loop — the gate
-  will ask. (A workflow that has no such handling will simply abort on an empty requirement;
-  relay that.)
+  happens next. In the shipped pack, every run builds a **PRD** (`requirement/prd.md`)
+  before the HLD: if the folder is empty it offers a gate ("add files & re-check /
+  brainstorm it with me / abort"); either way the user is then asked at a gate for optional
+  **references** (Figma links, doc/file paths, tickets), and the PRD step consolidates a
+  complete requirement as-is or fills gaps through high-level product Q&A. If you already
+  know the user has a PRD/notes to paste, point them at that folder first; otherwise just
+  init and run the loop — the gates will ask. (A workflow with no such handling will simply
+  abort on an empty requirement; relay that.)
 
 ## The loop
 

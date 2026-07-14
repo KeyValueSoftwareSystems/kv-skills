@@ -21,6 +21,8 @@ def canned_agent_outputs(step, action):
     """Outputs by node id — mirrors each node's declared outputs list."""
     node = step.rsplit("/", 1)[-1]
     table = {
+        "brainstorm_draft": {"draft_summary": "PRD drafted; 0 open questions"},
+        "rq_fold": {"refined_summary": "folded 1 answer"},
         "author_hld": {"hld_summary": "3 services, 2 new tables"},
         "refine_hld": {"refined_summary": "folded 1 answer"},
         "backend_design": {"lld_path": "lld/backend.md", "contract_notes": "rest+cursor"},
@@ -148,6 +150,7 @@ class SdlcE2E(unittest.TestCase):
     def test_happy_path(self):
         self.prep_tasks_json()
         gates = {
+            "design/collect_references": [("none", None)],
             "design/hld_approval": [("approve", None)],
             "contract_approval": [("approve", None)],
             "release_approval": [("approve", None)],
@@ -160,6 +163,9 @@ class SdlcE2E(unittest.TestCase):
         # both stacks implemented through the nested subworkflow-in-branch
         self.assertIn("implement[backend]/impl/implement", steps)
         self.assertIn("implement[frontend]/impl/review", steps)
+        # the PRD phase always runs (even with a requirement already present) before the HLD
+        self.assertIn("design/brainstorm_draft", steps)
+        self.assertLess(steps.index("design/brainstorm_draft"), steps.index("design/author_hld"))
         # design ran before implementation, qa after
         self.assertLess(steps.index("design/author_hld"), steps.index("arch_review"))
         self.assertLess(steps.index("merge_for_test"), steps.index("qa/qa_run"))
@@ -167,6 +173,7 @@ class SdlcE2E(unittest.TestCase):
     def test_revise_cascade_from_contract_gate(self):
         self.prep_tasks_json()
         gates = {
+            "design/collect_references": [("none", None), ("none", None)],
             "design/hld_approval": [("approve", None), ("approve", None)],
             "contract_approval": [("revise", "tighten the API"), ("approve", None)],
             "release_approval": [("approve", None)],
@@ -181,6 +188,7 @@ class SdlcE2E(unittest.TestCase):
     def test_blocking_arch_review_gate_waive(self):
         self.prep_tasks_json()
         gates = {
+            "design/collect_references": [("none", None)],
             "design/hld_approval": [("approve", None)],
             "arch_gate": [("waive", None)],
             "contract_approval": [("approve", None)],
@@ -225,6 +233,7 @@ class SdlcE2E(unittest.TestCase):
         globals()["canned_agent_outputs"] = patched
         try:
             gates = {
+                "design/collect_references": [("none", None)],
                 "design/hld_approval": [("approve", None)],
                 "contract_approval": [("approve", None)],
                 "release_approval": [("approve", None)],
@@ -294,7 +303,9 @@ class SdlcE2E(unittest.TestCase):
                                        stdout=proc.stdout)
             elif action["action"] == "ask_gate":
                 step = action["step"]
-                if step == "oq_ask":
+                if step == "collect_references":
+                    resolver.record_gate(run, step, "none")
+                elif step == "oq_ask":
                     asked.append(action["prompt"])
                     self.assertIn("Quota per user?", action["prompt"])
                     resolver.record_gate(run, step, "answer", input_text="2")
@@ -313,9 +324,9 @@ class SdlcE2E(unittest.TestCase):
         self.assertEqual(doc["questions"][0]["resolution"]["answer"], "100")
 
     def test_brainstorm_path_when_requirement_empty(self):
-        """Empty requirement folder -> intake gate -> brainstorm the requirement via the
-        real oq_serve/oq_record scripts (pointed at requirement-questions.json) -> reach
-        author_hld. The requirement loop mirrors the design OQ loop."""
+        """Empty requirement folder -> intake gate -> references gate (with a link) ->
+        author the PRD via the real oq_serve/oq_record scripts (on requirement-questions.json)
+        -> reach author_hld. The PRD loop mirrors the design OQ loop."""
         # start from an EMPTY requirement folder (undo setUp's seed file)
         req_dir = os.path.join(self.tmp, ".maestro", "demo", "requirement")
         for name in os.listdir(req_dir):
@@ -327,6 +338,7 @@ class SdlcE2E(unittest.TestCase):
 
         seen = []
         asked = []
+        gave_refs = []
         reached_hld = False
         for _ in range(80):
             run = resolver.Run("demo", self.tmp)
@@ -376,6 +388,10 @@ class SdlcE2E(unittest.TestCase):
             elif action["action"] == "ask_gate":
                 if step == "requirement_intake":
                     resolver.record_gate(run, step, "brainstorm")
+                elif step == "collect_references":
+                    gave_refs.append(action["prompt"])
+                    resolver.record_gate(run, step, "provide",
+                                         input_text="https://figma.com/file/demo")
                 elif step == "rq_ask":
                     asked.append(action["prompt"])
                     resolver.record_gate(run, step, "answer", input_text="2")
@@ -386,6 +402,7 @@ class SdlcE2E(unittest.TestCase):
             self.fail("brainstorm path did not reach author_hld")
 
         self.assertTrue(reached_hld, "never reached author_hld")
+        self.assertEqual(len(gave_refs), 1)  # references gate was offered
         self.assertIn("brainstorm_draft", seen)
         self.assertIn("rq_fold", seen)
         self.assertEqual(len(asked), 1)

@@ -22,13 +22,14 @@ nodes:
     label: Requirement present?
     run: [python3, engine/requirement_serve.py, ".maestro/${inputs.slug}/requirement"]
     routes:
-      - {when: "${steps.assert_requirement.outputs.state} == have", to: author_hld}
+      - {when: "${steps.assert_requirement.outputs.state} == have", to: collect_references}
       - {to: requirement_intake}
 
-  # ---- requirement intake + brainstorm (only reached when the folder is empty) ----
-  # Mirrors the open-questions cycle below, but gathers the REQUIREMENT (not design
-  # answers) via gated Q&A and reuses the same engine scripts, pointed at a separate
-  # requirement-questions.json.
+  # ---- PRD phase: intake -> collect references -> author/refine the PRD -> Q&A loop ----
+  # ALWAYS produces .maestro/<slug>/requirement/prd.md before the HLD. If the user provided
+  # a complete requirement it is consolidated into prd.md with no questions; otherwise the
+  # gated Q&A loop (reusing the oq_* scripts on requirement-questions.json) fills the gaps.
+  # requirement_intake is reached only when the folder is empty.
   - id: requirement_intake
     type: gate
     label: No requirement found
@@ -38,28 +39,47 @@ nodes:
       How do you want to supply the requirement for "${inputs.feature}"?
     options:
       - {id: add-files, label: I'll add files now — re-check, to: assert_requirement}
-      - {id: brainstorm, label: Brainstorm it with me, to: brainstorm_draft}
+      - {id: brainstorm, label: Brainstorm it with me, to: collect_references}
       - {id: reject, label: Abort the run, to: abort}
+
+  - id: collect_references
+    type: gate
+    label: Starting references
+    prompt: |
+      Optional: paste any references to ground the PRD for "${inputs.feature}" — Figma links,
+      doc or file paths, tickets, URLs. Local paths are read; links that can't be opened are
+      recorded in the PRD and turned into a question if their content matters. Or pick "none".
+    options:
+      - {id: provide, label: I have references to add, to: brainstorm_draft, input: refs}
+      - {id: none, label: No references — continue, to: brainstorm_draft}
 
   - id: brainstorm_draft
     type: agent
-    label: Draft requirement + questions
+    label: Author / refine the PRD
     instruction: |
-      There is no written requirement for "${inputs.feature}" yet. From the one-line seed
-      (and anything already in .maestro/${inputs.slug}/requirement/), draft an initial
-      requirement at .maestro/${inputs.slug}/requirement/brainstorm.md and enumerate the
-      essential unknowns needed to design it as questions in
-      .maestro/${inputs.slug}/requirement-questions.json (schema
-      engine/schemas/open-questions.schema.json), each with why it matters and 2-4 options.
-      Assert nothing the user has not confirmed — capture every assumption as an open
-      question. Do not ask the user anything directly.
+      Produce the product requirement doc (PRD) for "${inputs.feature}" at
+      .maestro/${inputs.slug}/requirement/prd.md. Read EVERY file already in
+      .maestro/${inputs.slug}/requirement/ (a PRD, notes, mockups — may be empty) and fold in
+      the provided references: ${steps.collect_references.outputs.refs}
+      For local file paths, read them; for Figma/URLs/tickets you cannot open, record the link
+      in the PRD's References section and (only if its content is decision-critical) raise it
+      as a question — never invent its contents.
+
+      Then write requirement-questions.json (schema engine/schemas/open-questions.schema.json)
+      with ONLY the remaining HIGH-LEVEL product/feature gaps — problem, users, scope, goals,
+      constraints, acceptance — each with why it matters and 2-4 options. Do NOT ask
+      design/technical/implementation questions (API, schema, components, tech choices) — those
+      belong to the HLD downstream. If the inputs already form a COMPLETE PRD, just consolidate
+      them into prd.md and write an EMPTY questions set (no fabricated questions). Assert
+      nothing the user has not confirmed; do not ask the user anything directly.
     skill: brainstorm
     inputs:
       feature: "${inputs.feature}"
       slug: "${inputs.slug}"
       requirement_dir: ".maestro/${inputs.slug}/requirement"
+      references: "${steps.collect_references.outputs.refs}"
     outputs: [draft_summary]
-    artifact: ".maestro/${inputs.slug}/requirement/brainstorm.md"
+    artifact: ".maestro/${inputs.slug}/requirement/prd.md"
     max_visits: 3
     next: rq_serve
 
@@ -107,10 +127,10 @@ nodes:
 
   - id: rq_fold
     type: agent
-    label: Fold answers into requirement
+    label: Fold answers into the PRD
     instruction: |
       Resolved requirement questions await folding. Apply each resolved answer to
-      .maestro/${inputs.slug}/requirement/brainstorm.md ('you-decide' resolutions: pick a
+      .maestro/${inputs.slug}/requirement/prd.md ('you-decide' resolutions: pick a
       sensible default and record the choice), then mark those questions status "folded" in
       .maestro/${inputs.slug}/requirement-questions.json and re-validate it with
       python3 engine/validate_open_questions.py.
@@ -118,7 +138,7 @@ nodes:
     inputs:
       slug: "${inputs.slug}"
     outputs: [refined_summary]
-    artifact: ".maestro/${inputs.slug}/requirement/brainstorm.md"
+    artifact: ".maestro/${inputs.slug}/requirement/prd.md"
     max_visits: 20
     next: rq_serve
 
